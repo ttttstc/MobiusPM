@@ -1,224 +1,293 @@
-# MobiusPM Excel-native 跟催工具 设计文档
+# MobiusPM 项目决策助理 设计文档 v2
 
-版本:v1.0(收敛版)
+版本:v2.0(agentic loop 形态)
 日期:2026-06-27
 状态:Approved · 作为开发蓝图
-原 PRD:`docs/Excel自动跟催Agent_PRD.md`(保留存档,作为需求与背景来源)
+原始 PRD:`docs/Excel自动跟催Agent_PRD.md`(保留存档,作为规则/模板/数据结构的真相源)
+v1 设计:已被本文取代(git 历史可查)
 
 ---
 
-## 0. 这份文档的位置
+## 0. 定位声明
 
-| 文档 | 角色 |
+> MobiusPM 是一个**周期性自主工作的项目决策助理**(agentic loop),以 Claude Agent SDK 为底座。**跟催只是它的第一项能力**,长期演进为完整的项目治理 agent(风险预警、依赖分析、会议建议、升级路径等)。
+
+**不是什么:**
+- ❌ 不是"PM 自己跑的跟催脚本"(那是 v1 定位,已废弃)
+- ❌ 不是 Claude Code Skill(D 类形态承载不了"决策"语义)
+- ❌ 不是 LangChain 工作流(workflow 不适合开放性决策任务)
+
+**是什么:**
+- ✅ 一个长期运行的 agentic 系统(Anthropic Building Effective Agents 定义的 "Agents" 类别)
+- ✅ LLM 在 loop 里自主决定流程和工具使用
+- ✅ 有长期记忆,跨周期累积决策上下文
+- ✅ 工具层确定性、安全边界硬约束,LLM 不可绕过
+
+---
+
+## 1. 四层架构
+
+```
+┌─ Trigger 触发层
+│   - cron (Windows 任务计划): 工作日 9:00 / 14:00 / 18:00
+│   - 用户唤醒: python -m pm_agent wake
+│
+├─ Agent 决策层 (LLM in loop · Claude Agent SDK)
+│   system_prompt: 项目决策助理身份 + 目标 + 安全边界
+│   loop {
+│     think → tool_call → observe → think → ... → done
+│   }
+│   工具: read_excel · query_state · query_rule_suggestions
+│        gen_message · send_welink · ask_human
+│        write_decision · update_context_brief
+│
+├─ Tools 工具层 (确定性、可独立测试)
+│   pm_agent.tools.*  纯 Python 函数,无 LLM
+│   每个 tool 都强制安全检查(幂等/频控/白名单)
+│   LLM 绕不过 tool 层的硬规则
+│
+└─ Memory 记忆层 (SQLite,跨周期持久化)
+    短期: agent loop 内 scratchpad (SDK 管理)
+    长期: SQLite
+      - item_state         事项级状态
+      - follow_up_log      发送日志 (append-only)
+      - decision_log       决策日志 (LLM 每次决策 + rationale)
+      - context_brief      项目当前状态摘要 (每次 loop 结束更新)
+```
+
+---
+
+## 2. 核心设计原则
+
+### P1 LLM 不计算规则,但可以参考
+旧规则引擎(R-001~R-009、DQ-001~005)**降级为 `query_rule_suggestions` 工具**。LLM 调用获得"按规则该催的清单",然后**自主决定听不听**——可以接受、可以补充、可以拒绝。理由必须写入 `decision_log`。
+
+> **为什么**:规则覆盖不了边界情况(比如"这事虽然规则上该催,但说明字段里写着'对方在休假'");LLM 综合判断的价值就在这里。
+
+### P2 安全边界是硬规则
+**幂等、频控、发送白名单——这些不通过 LLM,直接在 tool 内强制**。LLM 永远绕不过去:
+- `send_welink` 工具内:先查 `follow_up_log` dedupe → 命中直接返回 `blocked`,不发
+- 单责任人当天 ≥ 5 条 → tool 返回 `rate_limited`
+- 白名单不在 enabled 列表 → tool 返回 `not_whitelisted`
+
+> **为什么**:LLM 不可信地处理"是否真的发出去"。把"能不能发"的最终决定权放在 deterministic code 里。
+
+### P3 每个对外发送必经人工确认 (MVP)
+agent 调 `send_welink` 前必须先调 `ask_human` 工具,把候选+消息+理由展示给 PM,得到确认才发送。**LLM 不能跳过 ask_human 直接 send**——这在 tool 层强制(`send_welink` 检查最近一次 `ask_human` 的 confirmation token)。
+
+> **为什么**:agent 仍是新事物,信任要靠时间积累。等准确率稳定 2 周以上再考虑放开白名单自动发。
+
+### P4 决策必须留 rationale
+LLM 每次做出"催 / 不催 / 升级 / 等待"的决策都要在 `decision_log` 写理由。这条不是约定,**`write_decision` 工具强制 rationale 字段非空**。
+
+> **为什么**:agent 可审计是上线前提。出问题时能复盘"为什么当时这么判断"。
+
+### P5 跨周期上下文用 context_brief
+每次 loop 结束前,agent 必须调用 `update_context_brief` 写一份"项目当前状态摘要"(约 300-500 token)。下次 loop 启动时自动加载,作为长期记忆的入口。
+
+> **为什么**:loop 之间没有共享 LLM context;靠 SQLite 持久化 + 启动时注入,实现"记性"。完整决策历史从 `decision_log` 按需查。
+
+### P6 工具层独立可测
+每个 tool 都是 pure Python function,**不依赖 LLM 即可单独运行**。这意味着 M1 工具层完成后,可以用脚本批跑全部 tool 验证正确性,再去接 agent。
+
+> **为什么**:agentic 系统调试成本高(每次跑都烧 token + 不确定),工具层先扎实再上 agent 是最经济的路径。
+
+---
+
+## 3. 实现路径:Claude Agent SDK
+
+### 3.1 为什么是 SDK,不是 Claude Code subagent / MCP
+
+| 候选 | 否决理由 |
 |---|---|
-| `Excel自动跟催Agent_PRD.md` | 原始 PRD,记录背景/现状分析/完整需求面。**保留不删**,仍是规则口径、数据分析、消息模板等内容的真相源。 |
-| `MobiusPM_设计文档.md`(本文) | **收敛后的开发蓝图**。明确"做什么/不做什么/怎么做",作为 issue 拆分与代码实现的**单一事实源**。两者冲突时以本文为准。 |
+| Claude Code Subagent | "周期性"意味着 cron 无人值守触发,必须脱离 Claude Code 也能跑;subagent 做不到 |
+| MCP Server + 任意 LLM | 工程复杂度过高;可以从 SDK 演进到 MCP,反之不行 |
+| **Claude Agent SDK** ✅ | 独立 Python 进程 · 完全控制 · 可 cron · 长期演进灵活度最高 |
 
-本文不重复 PRD 的规则细节(R-001~R-009、DQ-001~005、状态映射表、消息模板),那些在 PRD 中已经写得很清楚,实现时直接照搬。本文只记录**经讨论收敛后的方案形态、与 PRD 的差异、为什么这么做**。
-
----
-
-## 1. 一句话定义
-
-> 一个**主 Excel 只读、催办状态外置的 Python 无状态批处理工具**:定时/手动扫表 → 规则筛 → 生成候选清单 → PM 命令行勾选确认 → Notifier(MVP 用 mock,后续接真实 WeLink CLI)发送 → 写外置状态 → 出 HTML/JSON 报告。
-
----
-
-## 2. 核心架构
+### 3.2 SDK 路径的最小依赖
 
 ```
-┌─ 触发层    Windows 任务计划 / 手动命令       (定时,非常驻)
-│
-├─ 跟催引擎  Python · 无状态批处理 · 跑完即退
-│    读 Excel 快照 → WorkItem 规范化 → 规则筛 → 候选生成
-│       → 命令行确认台 → Notifier 发送 → 写状态 → 出报告
-│
-├─ 数据层    源 Excel(只读) + 外置状态存储(sqlite 或 jsonl)
-│
-└─ 输出层    HTML 报告 + JSON 报告(本次扫描快照)
+anthropic           # 官方 Python SDK
+openpyxl            # Excel 读取
+pyyaml              # 配置
+sqlite3             # 标准库,无需安装
 ```
 
-**关键性质:**
-- **无状态**:进程跑完即退。事项的唯一真相源是"源 Excel + 外置状态文件",**不在进程内存里**。任何时候重跑都能完整恢复。
-- **主表只读**:`项目630流水线排期计划.xlsx` 全程不写。
-- **发送解耦**:`WeLinkNotifier` 接口隔离,MVP 用 mock 实现跑通主链路,真实 CLI 后续替换,业务代码 0 改动。
-- **人在闭环里**:发送必经 PM 命令行勾选确认,杜绝自动群发的社交风险。
+### 3.3 Agent Loop 核心代码骨架
 
----
+```python
+# pm_agent/agent.py(伪代码,实际见 #8 issue)
+from anthropic import Anthropic
+client = Anthropic()
 
-## 3. 核心决策与"为什么"
+def run_agent(trigger_reason: str) -> AgentRunResult:
+    messages = [{"role": "user", "content": load_initial_prompt(trigger_reason)}]
 
-| # | 决策 | 替代了 PRD 的 | 为什么 |
-|---|---|---|---|
-| D1 | 半自动:扫→规则→草稿→**PM 命令行勾选**→发送 | 全自动群发 | 发消息是不可逆社交动作;责任人数据脏(`00853484` 工号当名、`李坤` vs `李坤(gitcode)` 等),不该让工具替 PM 得罪人。人工确认成本极低、风险消除最彻底。 |
-| D2 | **主 Excel 全程只读**,催办状态外置(sqlite/jsonl) | 在主表追加 13 个系统字段 | xlsx 内嵌 12 张图(最大 2.2MB)+ 4 个 drawing;openpyxl 读写会丢失这些资源,等于破坏台账。+ PM 同时在编辑,并发冲突;+ "序号"会随增删行漂移,催办历史会错位。外置一招消三患。 |
-| D3 | Python | TypeScript | 数据处理任务,openpyxl 已验证能正确读中文 xlsx;脚本短、依赖少、单 PM 部署/维护友好。 |
-| D4 | `WeLinkNotifier` 接口 + mock | 直接拼 CLI 命令 | 真实 CLI 接口未知,**绝不照着 PRD 的 `welink send --to <id> --message` 拍脑袋写**。接口隔离让 M1/M2 完全不依赖 CLI 即可跑通。 |
-| D5 | 定时触发 + 手动,**非常驻** | (PRD 隐含,易被误解为 daemon) | 数据源是天级人工维护;常驻无收益,反而引入内存泄漏、崩溃、重启等问题。短命进程最稳。 |
-| D6 | **HTML/JSON 报告 + 命令行两步确认**(L0 看板) | (无看板) | 单 PM 自用场景,本地 Web 看板过重(YAGNI)。报告打开即最新,命令行勾选自然成为"确认台"。架构已解耦,**扩团队时随时可升级 Web,零沉没成本**。 |
-| D7 | 看板的实时性=报告新鲜度 | "实时看板"幻想 | 数据源 Excel 是人工维护、天级更新。看板再"实时",数据新鲜度上限也只是 Excel 最后保存那一刻。"重跑一次即拿到最新"足够。 |
+    while True:
+        resp = client.messages.create(
+            model="claude-opus-4-8",
+            system=load_system_prompt(),
+            tools=TOOL_SCHEMAS,
+            messages=messages,
+            max_tokens=4096,
+        )
+        messages.append({"role": "assistant", "content": resp.content})
 
----
+        if resp.stop_reason == "end_turn":
+            break  # agent 完成
 
-## 4. 与原 PRD 的差异总览
+        if resp.stop_reason == "tool_use":
+            tool_results = []
+            for block in resp.content:
+                if block.type == "tool_use":
+                    result = TOOL_REGISTRY[block.name](**block.input)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": json.dumps(result),
+                    })
+            messages.append({"role": "user", "content": tool_results})
 
-### 4.1 砍掉(过度设计,不做)
-
-- ❌ 在主表追加 13 个系统字段(回写催办状态等)
-- ❌ 3 个新 Sheet:`Config` / `Contacts` / `FollowUpLog` → 改用 yaml + 外置文件
-- ❌ Excel 自动备份(不写表了就不需要)
-- ❌ Excel 日期序列号转换(openpyxl 直接给 `datetime` 对象,PRD 17.1 第 5 条验收作废)
-- ❌ 本地 Web 看板 / 桌面 app(MVP 不做,扩团队时再升)
-
-### 4.2 改
-
-- 🔁 全自动发送 → **PM 命令行勾选确认后发送**
-- 🔁 TypeScript → **Python**
-- 🔁 itemId 由 `sheet名+序号` 组成 → **序号不稳定,改用内容指纹**(见 §6)
-- 🔁 催办状态回写主表 → **外置 sqlite/jsonl,主表只读**
-- 🔁 直接调 `welink` 命令 → **`WeLinkNotifier` 接口 + mock**,真实 CLI 后接
-
-### 4.3 加
-
-- ➕ `WeLinkNotifier` 接口抽象 + mock 实现
-- ➕ 稳定 itemId 方案(内容指纹 + 失联检测兜底)
-- ➕ 候选清单命令行确认台(`pm-agent review` 子命令)
-
-### 4.4 保留(PRD 的精华,**原文照搬**)
-
-- ✅ **状态映射表**(PRD §8:问题状态 × 支持情况 → 标准状态)
-- ✅ **跟催规则 R-001 ~ R-009**(PRD §9.2)
-- ✅ **数据质量规则 DQ-001 ~ DQ-005**(PRD §9.1)
-- ✅ **优先级映射 P0/P1/P2/Ignore**(PRD §8)
-- ✅ **4 个消息模板**(PRD §10.3:待验收/进展/排期/计划缺失)
-- ✅ **幂等 key 公式 + 频控规则**(PRD §11)
-- ✅ **WorkItem / ReminderCandidate / FollowUpLog 数据结构**(PRD §15,字段不变,语言改 Python dataclass)
-
-> 一句话:PRD 的"大脑"(规则/映射/模板/幂等)几乎全保留,要动的是"躯干"(发送方式、存储方式、技术栈、交互层)。
-
----
-
-## 5. 数据现状(以真实 Excel 为准)
-
-> 本次基于真实 Excel(`source/项目630流水线排期计划.xlsx`)直接探查所得。与 PRD §2.3 略有出入(+2 条新增),证明该表是活的,**任何统计都不能硬编码进代码**。
-
-**工作簿:** 7 个 Sheet,主表 `630攻关问题清单` 共 **179 条有效行**(PRD 时 177)。
-
-**主表表头(第 1 行):**
-`序号 | 用户问题原文 | 问题状态 | 来源 | issue | 优先级 | 当前处理方(依次依赖) | 责任人 | 支持情况 | 计划时间 | 说明`
-
-**问题状态:** Open 118 / Close 61
-**优先级:** 必备(630前) 129 / 长期演进(630后) 28 / 增强(争取630) 18 / 拒绝(不处理) 4
-**支持情况:** 待验收 67 / 已完成 63 / 挂起(630后分析) 23 / 待排期 9 / 开发中 7 / 重复单 6 / 拒绝 4
-**来源:** CANN 98 / 计算 57 / GitCode 24
-**空值:** 责任人 19 / 计划时间 117 / issue 154 / 说明 79
-**多责任人行:** 32
-**计划时间数据类型:** datetime(无 Excel 序列号,无需手动转换)
-**去重责任人:** 31 人(含 `00853484` 工号、`李坤` vs `李坤(gitcode)` 等脏数据 → 联系人映射需手工清洗)
-
-**活跃待跟催候选(推断):**
-- Open 且 支持情况 ∉ {挂起,重复单,拒绝,已完成} = **77 条**(M1 首要扫描目标)
-- Open 且 支持情况 ∉ {挂起,重复单,拒绝} = 85 条(含"Open+已完成 待关闭")
-
-**xlsx 内部资源(影响是否回写):**
-- 12 张图片(最大 2269KB)、4 个 drawing 对象 → **openpyxl 回写会丢失** → 决定 D2
-
----
-
-## 6. 稳定 itemId 方案
-
-**问题:** 主表只读 → 不能写 ID 列;序号会随增删行漂移 → 不能直接做 ID。
-
-**方案:** **内容指纹 + 失联检测兜底**
-
-```
-itemId = sha1(来源 + "::" + normalize(用户问题原文))[:12]
+    return finalize_run(messages)
 ```
 
-- `normalize`:去首尾空白、压缩内部空白、Unicode NFKC、小写化中文标点统一(不去原文,仅做空白/标点归一化)。
-- "来源 + 问题原文"在业务上构成事项的天然唯一性(同一来源不可能两条一字不差的同问题原文)。
-- 改"用户问题原文"会换 ID → **业务上视为新事项**,这正是我们想要的(原文改了语义就变了,催办上下文也变了)。
-- **失联检测**:每次扫描后,对外置状态文件里"上次有、本次无"的 itemId 标记 `vanished`,在报告里独立一节展示,提示 PM 是否被改了原文或删除。
+参考:[Anthropic Cookbook · Agents Pattern](https://github.com/anthropics/anthropic-cookbook)
 
-> 注:状态时效短(催办幂等 key 自带日期),itemId 仅需在一个跟催周期内稳定,该方案足够。
+### 3.4 默认模型
+
+- 主 agent loop:`claude-opus-4-8`(决策质量优先)
+- 子任务(如总结 brief):`claude-sonnet-4-6`(成本/速度均衡)
+- 模型选择写入配置,可调
 
 ---
 
-## 7. 外置状态存储
+## 4. 工具层接口(全集)
 
-**选型:** **SQLite**(单文件、零运维、并发安全、未来扩展性最好)。位置:`state/pm-agent.db`,git 忽略。
+| Tool 名 | 功能 | 强制安全 |
+|---|---|---|
+| `read_excel(sheet, only_active=true)` | 读主表 → 标准化 WorkItem 列表 | 主表只读;mtime 验证 |
+| `query_state(item_id?)` | 查事项当前状态、历史催办次数、上次催办时间 | — |
+| `query_rule_suggestions()` | 跑 R/DQ 规则给出建议(LLM 可参考) | 输出 read-only |
+| `gen_message(item_id, reminder_type)` | 按模板渲染消息 | 长度限制、占位符校验 |
+| `ask_human(candidates: list, question: str)` | 把候选 + 消息发给 PM,等确认 | 返回 confirmation token |
+| `send_welink(item_id, message, confirmation_token)` | 真正发送(MVP 走 mock) | 幂等 · 频控 · 白名单 · 必须有 token |
+| `write_decision(item_id, decision_type, rationale, action)` | 写决策日志 | rationale 非空 |
+| `update_context_brief(brief: str)` | 写本次 loop 的项目摘要 | 长度 ≤ 1000 token |
+| `list_vanished()` | 列出失联事项(本次没扫到的旧 itemId) | — |
 
-**两张表:**
+---
+
+## 5. 记忆层 schema
 
 ```sql
--- 事项级催办状态(每事项一行)
+-- 事项级状态
 CREATE TABLE item_state (
-  item_id        TEXT PRIMARY KEY,
-  last_seen_at   TEXT NOT NULL,         -- ISO8601
-  reminder_count INTEGER NOT NULL DEFAULT 0,
+  item_id          TEXT PRIMARY KEY,
+  last_seen_at     TEXT NOT NULL,
+  reminder_count   INTEGER NOT NULL DEFAULT 0,
   last_reminder_at TEXT,
   last_reminder_type TEXT,
-  vanished_at    TEXT                   -- 失联标记
+  vanished_at      TEXT
 );
 
--- 发送日志(每次发送一行,append-only)
+-- 发送日志(append-only)
 CREATE TABLE follow_up_log (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id         TEXT NOT NULL,
-  item_id        TEXT NOT NULL,
-  owner          TEXT,
-  welink_id      TEXT,
-  reminder_type  TEXT NOT NULL,
-  rule_id        TEXT NOT NULL,
-  send_status    TEXT NOT NULL,         -- dry_run | success | failed | skipped
-  message        TEXT NOT NULL,
-  dedupe_key     TEXT NOT NULL,
-  error          TEXT,
-  created_at     TEXT NOT NULL
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id        TEXT NOT NULL,
+  item_id       TEXT NOT NULL,
+  owner         TEXT,
+  welink_id     TEXT,
+  reminder_type TEXT NOT NULL,
+  send_status   TEXT NOT NULL,  -- success | failed | skipped | mock
+  message       TEXT NOT NULL,
+  dedupe_key    TEXT NOT NULL,
+  error         TEXT,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX idx_log_dedupe ON follow_up_log(dedupe_key);
+
+-- 决策日志(LLM 每次决策)
+CREATE TABLE decision_log (
+  id              TEXT PRIMARY KEY,         -- uuid
+  run_id          TEXT NOT NULL,
+  decision_type   TEXT NOT NULL,            -- followup | skip | escalate | wait | risk_alert | brief
+  target_item_id  TEXT,                     -- 可空(全局决策)
+  rationale       TEXT NOT NULL,            -- LLM 给出的理由
+  action_taken    TEXT,                     -- 实际执行的工具调用
+  human_confirmed INTEGER NOT NULL DEFAULT 0,
+  created_at      TEXT NOT NULL
 );
 
-CREATE INDEX idx_log_dedupe ON follow_up_log(dedupe_key);
-CREATE INDEX idx_log_item ON follow_up_log(item_id, created_at);
+-- 项目摘要(每次 loop 结束后更新,只保留最近 N 份)
+CREATE TABLE context_brief (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id     TEXT NOT NULL,
+  brief      TEXT NOT NULL,                  -- LLM 写的摘要
+  token_count INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
 ```
 
-幂等查询:每次发送前 `SELECT 1 FROM follow_up_log WHERE dedupe_key=? AND send_status IN ('success','dry_run')` 命中即跳过。
+**load_initial_prompt 工作机制**:
+1. 读 `context_brief` 最新 1 条 → 作为"上次活到哪了"
+2. 读 `decision_log` 最近 N 条 → 作为"最近做了什么决策"
+3. 读 `follow_up_log` 最近 N 条 → 作为"最近催了谁"
+4. 拼成 user message 喂进 agent loop
 
 ---
 
-## 8. 目录结构
+## 6. 触发模式
+
+| 模式 | 触发方式 | 行为 |
+|---|---|---|
+| **wake** | `python -m pm_agent wake` | 用户主动唤醒,有 PM 在场,可对话确认 |
+| **cron** | Windows 任务计划 | 工作日 9/14/18 点,**dry-run 模式**——只决策、写日志、不真发(等 PM 来 wake 才走 ask_human + send 路径) |
+| **debug** | `python -m pm_agent debug --tool read_excel` | 直接调工具,绕过 agent loop,用于工具层测试 |
+
+**关键设计:cron 不发送**。理由:
+1. 周期性触发时 PM 不一定在场,绕过 ask_human = 违反 P3
+2. 把"决策"和"动作"解耦——cron 负责更新认知和准备建议,wake 负责执行
+3. PM 早上 wake 时,agent 已经基于昨晚的数据想好建议,对话效率更高
+
+---
+
+## 7. 目录结构
 
 ```
 MobiusPM/
-├── source/                              # 源 Excel(只读)
+├── source/                              # 源 Excel(只读 · gitignored)
 │   └── 项目630流水线排期计划.xlsx
-├── state/                               # 外置状态(gitignore)
-│   ├── pm-agent.db                      # sqlite
-│   └── reports/                         # 历次报告归档
-│       ├── 2026-06-27-0900/
-│       │   ├── report.html
-│       │   ├── report.json
-│       │   └── candidates.yaml          # 待确认候选清单
+├── state/                               # SQLite + 报告(gitignored)
+│   └── pm-agent.db
 ├── config/
 │   ├── pm-agent.yaml                    # 主配置
-│   └── contacts.yaml                    # 责任人 → WeLinkID 映射
-├── pm_agent/                            # Python 包
+│   ├── contacts.yaml                    # 联系人映射(gitignored)
+│   └── contacts.example.yaml            # 模板
+├── pm_agent/
 │   ├── __init__.py
-│   ├── cli.py                           # 入口:scan/review/send/report
-│   ├── excel_reader.py                  # 读 Excel,产 WorkItem
-│   ├── work_item.py                     # WorkItem dataclass + 规范化
-│   ├── status_mapper.py                 # 状态映射(PRD §8)
-│   ├── rules.py                         # DQ + R 规则
-│   ├── candidate.py                     # 候选生成 + 幂等 key
-│   ├── messages.py                      # 模板渲染(PRD §10.3)
-│   ├── store.py                         # sqlite 存储
-│   ├── notifier.py                      # WeLinkNotifier 接口 + MockNotifier
-│   ├── notifier_welink_cli.py           # 真实 CLI 适配(M3)
-│   ├── contacts.py                      # 联系人映射
-│   ├── report.py                        # HTML + JSON 报告
-│   └── confirm.py                       # 候选清单命令行确认台
+│   ├── __main__.py                      # CLI 入口
+│   ├── agent.py                         # Agent loop 主体
+│   ├── prompts/
+│   │   ├── system.md                    # system prompt
+│   │   └── initial_user.md.j2           # 初始 user message 模板
+│   ├── tools/
+│   │   ├── __init__.py                  # TOOL_REGISTRY + TOOL_SCHEMAS
+│   │   ├── excel.py                     # read_excel
+│   │   ├── state.py                     # query_state + write_decision + brief
+│   │   ├── rules.py                     # query_rule_suggestions
+│   │   ├── messages.py                  # gen_message
+│   │   ├── human.py                     # ask_human
+│   │   └── notifier.py                  # send_welink (Notifier 接口 + mock + 真 CLI)
+│   ├── domain/
+│   │   ├── work_item.py
+│   │   ├── status_mapper.py
+│   │   └── item_id.py                   # 稳定 itemId 算法
+│   └── memory/
+│       ├── store.py                     # SQLite 封装
+│       └── schema.sql
 ├── tests/
 ├── docs/
-│   ├── Excel自动跟催Agent_PRD.md         # 原 PRD(保留)
+│   ├── Excel自动跟催Agent_PRD.md         # 原始 PRD (规则真相源)
 │   └── MobiusPM_设计文档.md              # 本文
 ├── requirements.txt
 └── README.md
@@ -226,144 +295,98 @@ MobiusPM/
 
 ---
 
-## 9. CLI 设计
+## 8. 数据现状(基于真实 Excel · 与 v1 一致)
 
-```bash
-# 1) 扫描 + 生成候选清单 + dry-run 报告(不发送)
-pm-agent scan
-  → 写 state/reports/{ts}/{report.html, report.json, candidates.yaml}
-  → 打开 report.html 看本次状态
-
-# 2) PM 编辑 candidates.yaml,把要发的项 send: true,可改 message
-notepad state/reports/{ts}/candidates.yaml
-
-# 3) 真正发送(MVP 走 mock,M3 走真实 CLI)
-pm-agent send --from state/reports/{ts}/candidates.yaml
-
-# 4) 单独看上次报告
-pm-agent report --latest
-```
-
-`candidates.yaml` 形态:
-
-```yaml
-run_id: run_20260627_090000
-items:
-  - item_id: a1b2c3d4e5f6
-    title: "流水线支持自定义 Action(自定..."
-    owner: 曹禹
-    welink_id: caoyu
-    rule_id: R-001
-    reminder_type: acceptance_confirm
-    severity: high
-    send: false          # PM 改 true 才会发
-    message: |
-      【项目事项验收确认】
-      ...
-```
+> 详细见 v1(git 历史)。要点摘录:
+- 主表 `630攻关问题清单` 共 **179 条**
+- Open 118 / Close 61
+- 必备(630前) 129 / 增强(争取630) 18 / 长期演进(630后) 28 / 拒绝 4
+- **活跃跟催候选(推断) ≈ 77 条**
+- xlsx 内嵌 12 张图 + 4 个 drawing → **决定主表全程只读**
+- 责任人去重 31 人,含工号 / 同人不同写法等脏数据 → 联系人映射需要手工清洗
 
 ---
 
-## 10. 配置项
+## 9. 稳定 itemId
 
-`config/pm-agent.yaml`:
-
-```yaml
-excel:
-  path: source/项目630流水线排期计划.xlsx
-  sheet: 630攻关问题清单
-
-reminder:
-  same_item_cooldown_hours: 24
-  max_messages_per_owner_per_day: 5
-  max_messages_per_run: 50
-  auto_priorities:
-    - "必备(630前)"
-    - "增强(争取630)"
-  skip_support_statuses:
-    - "挂起(630后分析)"
-    - "重复单"
-    - "拒绝"
-
-notifier:
-  mode: mock          # mock | welink_cli
-  welink_cli_path: ""  # M3 填
-
-state:
-  db_path: state/pm-agent.db
-  reports_dir: state/reports
+```
+itemId = sha1(来源 + "::" + normalize(用户问题原文))[:12]
 ```
 
-`config/contacts.yaml`:
+`normalize`:NFKC + 空白压缩 + 中文标点统一。**主表不能写 ID 列**(xlsx 回写会丢图),只能用内容指纹。改原文 = 新事项,旧 itemId 标 `vanished`。
 
-```yaml
-- name: 叶红达
-  welink_id: yehongda
-  team: Pipeline
-  enabled: true
-- name: 李坤
-  aliases: ["李坤(gitcode)"]   # 应对脏数据
-  welink_id: likun
-  team: GitCode
-  enabled: true
-```
+---
+
+## 10. 沿用 PRD 的核心资产
+
+> **PRD 的"大脑"几乎全保留,只是被 LLM 调用方式包装了一层。** 详细内容查 `Excel自动跟催Agent_PRD.md`。
+
+| 资产 | 在 v2 的位置 |
+|---|---|
+| 状态映射表(PRD §8) | `domain/status_mapper.py` |
+| 跟催规则 R-001~R-009(PRD §9.2) | `tools/rules.py` 的 `query_rule_suggestions` 输出 |
+| 数据质量规则 DQ-001~005(PRD §9.1) | 同上 |
+| 优先级映射(PRD §8) | `domain/work_item.py` |
+| 4 个消息模板(PRD §10.3) | `tools/messages.py` |
+| 幂等 key 公式(PRD §11.1) | `tools/notifier.py` 内部强制 |
+| 频控规则(PRD §11.2) | 同上 |
+| WorkItem / FollowUpLog 数据结构(PRD §15) | `domain/` + `memory/schema.sql` |
 
 ---
 
 ## 11. 里程碑
 
-| 阶段 | 交付 | 见价值点 | 依赖外部 |
-|---|---|---|---|
-| **M1-A** | 项目脚手架 + 配置 + Excel 读取 + WorkItem 规范化(含状态映射、稳定 itemId) | 能解析 179 条事项为标准化数据 | 无 |
-| **M1-B** | 规则引擎(DQ + R)+ 候选生成 + HTML/JSON 报告(dry-run) | **一跑就能看到"今天该催什么"**,验证规则准不准 | 无 |
-| **M2-A** | 外置状态存储(sqlite)+ 幂等 + 频控去重 | 重跑不重发 | 无 |
-| **M2-B** | Notifier 接口 + Mock + 消息模板 + 候选清单确认台 + send 闭环 + 联系人映射 | 完整"扫→确认→发→记"闭环可演示 | 无 |
-| **M3** | 真实 WeLink CLI 适配 + 定时任务 + 失败重试 | 真正上线 | 你提供真实 CLI |
+| 阶段 | 交付 | 验证方式 |
+|---|---|---|
+| **M1 工具层** | 全部 tools 可独立运行 + SQLite 状态 + Mock Notifier | 脚本批跑所有 tool,产出 JSON,肉眼/diff 验证 |
+| **M2 Agent 骨架** | Agent SDK 集成 + 跟催场景最小 loop + ask_human + mock send | wake 模式跑通一次完整对话闭环 |
+| **M3 记忆与决策** | context_brief 持久化 + decision_log + 启动时上下文注入 | 连续跑 3 次 wake,第 3 次能引用前 2 次决策 |
+| **M4 上线** | cron 触发(dry-run)+ 真实 WeLink CLI 适配 + 部署文档 | 一周连续无意外退出 |
+| **M5+ 决策扩展** | 风险预警 / 依赖分析 / 会议建议 / 升级路径 | 待定 |
 
-> M1 + M2 全部**零外部依赖**,本机即可跑通完整闭环(走 mock 通道)。
+> M1+M2 是核心闭环,完成后 agent 已可对话工作。
 
 ---
 
 ## 12. 验收标准(MVP 整体)
 
-1. **解析正确性:** 主表 179 条全部能解析为 WorkItem,字段无丢失。
-2. **规则正确性:** dry-run 报告中,M1-B 跑出的活跃候选数量与现状分析推断一致(Open ∩ 非跳过支持状态 ≈ 77,允许 ±5 偏差因状态映射边界)。
-3. **稳定性:** 同一 Excel 连续两次 `scan` 产生的 itemId 一致;改一条事项的"用户问题原文",该事项被视为"vanished + 新增"。
-4. **幂等:** `send` 同一个 candidates.yaml 两次,第二次全部跳过,sqlite 无重复 `success` 记录。
-5. **频控:** 单责任人当天超过 `max_messages_per_owner_per_day` 时,后续候选标记 `blocked`,不进入发送。
-6. **安全:** 全流程主 Excel 文件 mtime 不变(只读验证)。
-7. **报告:** HTML 报告可独立打开,包含本次扫描摘要、待催明细、数据质量异常、失联事项 4 个区块。
+1. **工具正确性**:每个 tool 单独跑能产出预期输出;`read_excel` 解析 179 条;主表 mtime 不变。
+2. **Agent 闭环**:`wake` 模式下,agent 能完成"读表→查规则→跟 PM 对话→确认→mock 发送→写决策→更新 brief→退出"完整流程。
+3. **安全边界**:
+   - 手动构造重复 candidates,`send_welink` 返回 `blocked: dedupe`
+   - 手动构造单责任人 6 条,第 6 条返回 `blocked: rate_limited`
+   - 未调 `ask_human` 直接调 `send_welink` → 返回 `error: no_confirmation_token`
+4. **记忆**:连跑 3 次,第 3 次 system prompt 包含前 2 次 brief 摘要。
+5. **可审计**:每个发送都在 `follow_up_log` + `decision_log` 各留一行,可对账。
+6. **成本可控**:单次 wake loop token 用量 ≤ 50k(可观测,可配置上限触发自动结束)。
 
 ---
 
-## 13. 安全与边界
+## 13. 安全与边界(扩展自 PRD §19)
 
-继承 PRD §19 全部条款,补充:
-
-- **主 Excel 全程只读**,任何时刻被工具打开都不持有写锁。
-- **联系人映射文件不入 git**(可能含工号/真名)。
-- **CLI 参数严格 escape**,即便走 mock 也按真发送规范处理,避免 M3 切换时埋雷。
-- **失联事项**(vanished)不自动清理,保留 30 天供 PM 排查。
-
----
-
-## 14. 不在范围(明确不做)
-
-继承 PRD §3.2 全部"非目标",补充:
-
-- ❌ MVP 不做本地 Web 看板(待扩团队再做)
-- ❌ MVP 不做桌面 app
-- ❌ MVP 不引入 LLM(规则引擎够用;LLM 待 v2 用于话术生成/说明字段解析)
-- ❌ 不解析"说明"字段的多行时间线(PRD §2.4 已明确)
+1. 主 Excel 全程只读 → 任何时刻 mtime 不变
+2. LLM 调用必须配 token 上限,防止失控
+3. 所有 tool 调用日志可追溯
+4. `contacts.yaml` 含真名/工号 → 不入 git
+5. CLI 参数严格 escape(M4 接真 CLI 时)
+6. cron 模式 = dry-run,不真发
+7. agent 即便走偏,工具层硬约束保证"不会真发错消息"
 
 ---
 
-## 15. 后续演进(v2+)
+## 14. 不在范围(MVP 不做)
 
-继承 PRD §21,优先级排序:
+- ❌ 多项目支持(MVP 单 Excel)
+- ❌ Web 看板(对话即看板)
+- ❌ 桌面 app
+- ❌ 多人协作的 agent(单 PM 单 agent)
+- ❌ Self-modifying agent(不让 LLM 改自己的 system prompt 或 tool)
 
-1. 接入真实 WeLink CLI 后,观察 1-2 周准确率,再考虑放开"白名单自动发"
-2. LLM 话术生成(替代固定模板,根据"说明"字段定制开场)
-3. 升级本地 Web 看板(扩团队、多人确认时)
-4. 多 Sheet 联合(GitCode issue 清单 ↔ 630 攻关清单)
-5. 大路标访谈、Project Audit 等(PRD §21 完整列表)
+---
+
+## 15. 与原 PRD 的关系
+
+| 文档 | 角色 |
+|---|---|
+| `Excel自动跟催Agent_PRD.md` | 原始需求 + 规则细节 + 数据现状,**保留作为规则/模板真相源** |
+| `MobiusPM_设计文档.md`(本文) | **架构与决策真相源**,与 PRD 冲突时以本文为准 |

@@ -1,23 +1,38 @@
-# Issues 文案目录
+# Issues 文案目录(v2 · agentic loop)
 
-本目录存放 5 个开发 issue 的正文文案。`gh issue create` 时通过 `-F` 参数引用,提交后即可同步到 GitHub。
+本目录存放 5 个开发 issue 的正文文案。`gh issue create -F` 引用提交到 GitHub。
 
-| # | 文件 | 标题 | 里程碑 | 依赖 |
-|---|---|---|---|---|
-| 1 | [01_M1-A_脚手架与Excel解析.md](01_M1-A_脚手架与Excel解析.md) | [M1-A] 项目脚手架 + Excel 读取与 WorkItem 规范化 | M1 | — |
-| 2 | [02_M1-B_规则引擎与报告.md](02_M1-B_规则引擎与报告.md) | [M1-B] 跟催规则引擎 + HTML/JSON 报告(dry-run 看板) | M1 | #1 |
-| 3 | [03_M2-A_状态存储与幂等频控.md](03_M2-A_状态存储与幂等频控.md) | [M2-A] 外置状态存储(SQLite)+ 幂等 + 频控去重 | M2 | #1 #2 |
-| 4 | [04_M2-B_Notifier与确认台与发送闭环.md](04_M2-B_Notifier与确认台与发送闭环.md) | [M2-B] WeLinkNotifier + Mock + 消息模板 + 命令行确认台 + send 闭环 | M2 | #1 #2 #3 |
-| 5 | [05_M3_真实CLI适配与定时部署.md](05_M3_真实CLI适配与定时部署.md) | [M3] 真实 WeLink CLI 适配 + 定时任务 + 失败重试 | M3 | #1-#4,真实 CLI |
+> **v1 历史**:首版 5 个 issue(基于"PM 跟催工具 · Skill+CLI"定位)已全部关闭,见 GitHub issues #1-#5。
+> **v2 定位**:项目决策助理 · Claude Agent SDK · agentic loop。
+> 详见 `docs/MobiusPM_设计文档.md`(v2)。
+
+## 5 个新 issue
+
+| 文件 | 标题 | 里程碑 | 依赖 |
+|---|---|---|---|
+| [01_M1-A_工具层基础.md](01_M1-A_工具层基础.md) | [M1-A] 工具层 Part 1:Excel + WorkItem + itemId + SQLite + 幂等频控 | M1 | — |
+| [02_M1-B_工具层完成.md](02_M1-B_工具层完成.md) | [M1-B] 工具层 Part 2:规则建议器 + Notifier + 消息渲染 + ask_human + write_decision | M1 | M1-A |
+| [03_M2_Agent骨架.md](03_M2_Agent骨架.md) | [M2] Agent 骨架:Claude Agent SDK + 跟催场景最小可跑 loop | M2 | M1-A, M1-B |
+| [04_M3_记忆层.md](04_M3_记忆层.md) | [M3] 记忆层:context_brief + decision_log 跨周期上下文加载 | M3 | M1, M2 |
+| [05_M4_周期触发与真实CLI.md](05_M4_周期触发与真实CLI.md) | [M4] 周期性触发(cron)+ 真实 WeLink CLI 适配 + 部署 | M4 | M1-M3 + 真实 CLI |
+
+## 推进顺序
+
+```
+M1-A ──▶ M1-B ──▶ M2 ──▶ M3 ──▶ M4
+   工具层               agent      记忆       上线
+```
+
+M1+M2 是核心闭环,完成后 agent 即可对话工作(走 mock)。
+M3 让 agent 有"记性"。
+M4 接真实 CLI + cron 上线。
 
 ## 批量提交命令
 
-待 `gh auth login` 重新认证后执行:
-
 ```bash
-gh issue create --title "[M1-A] 项目脚手架 + Excel 读取与 WorkItem 规范化" --label "M1,enhancement" -F docs/issues/01_M1-A_脚手架与Excel解析.md
-gh issue create --title "[M1-B] 跟催规则引擎 + HTML/JSON 报告(dry-run 看板)" --label "M1,enhancement" -F docs/issues/02_M1-B_规则引擎与报告.md
-gh issue create --title "[M2-A] 外置状态存储(SQLite)+ 幂等 + 频控去重" --label "M2,enhancement" -F docs/issues/03_M2-A_状态存储与幂等频控.md
-gh issue create --title "[M2-B] WeLinkNotifier + Mock + 消息模板 + 命令行确认台 + send 闭环" --label "M2,enhancement" -F docs/issues/04_M2-B_Notifier与确认台与发送闭环.md
-gh issue create --title "[M3] 真实 WeLink CLI 适配 + 定时任务 + 失败重试" --label "M3,enhancement" -F docs/issues/05_M3_真实CLI适配与定时部署.md
+gh issue create --title "[M1-A] 工具层 Part 1:Excel + WorkItem + itemId + SQLite + 幂等频控" --label "enhancement" -F docs/issues/01_M1-A_工具层基础.md
+gh issue create --title "[M1-B] 工具层 Part 2:规则建议器 + Notifier + 消息渲染 + ask_human + write_decision" --label "enhancement" -F docs/issues/02_M1-B_工具层完成.md
+gh issue create --title "[M2] Agent 骨架:Claude Agent SDK + 跟催场景最小可跑 loop" --label "enhancement" -F docs/issues/03_M2_Agent骨架.md
+gh issue create --title "[M3] 记忆层:context_brief + decision_log 跨周期上下文加载" --label "enhancement" -F docs/issues/04_M3_记忆层.md
+gh issue create --title "[M4] 周期性触发(cron)+ 真实 WeLink CLI 适配 + 部署" --label "enhancement" -F docs/issues/05_M4_周期触发与真实CLI.md
 ```
