@@ -10,6 +10,7 @@ TOOL_REGISTRY = {
     "send_welink": "pm_agent.tools.notifier.send_welink",
     "ask_human": "pm_agent.tools.human.ask_human",
     "query_history": "pm_agent.tools.state.query_history",
+    "write_project_report": "pm_agent.tools.report.write_project_report",
 }
 
 TOOL_SCHEMAS = [
@@ -85,8 +86,10 @@ TOOL_SCHEMAS = [
         "name": "query_rule_suggestions",
         "description": (
             "对 WorkItem 列表执行 DQ 数据质量规则 + R 跟催规则扫描，返回建议列表。"
-            "这是'建议'而非指令——LLM 可采纳、补充或拒绝，但拒绝时必须在 decision_log 中记录理由。"
-            "每条建议含 rule_id、reminder_type、severity、rationale_hint。"
+            "规则覆盖：DQ-001缺责任人 / DQ-002负载过重 / DQ-003缺日期 / "
+            "R-001待验收 / R-002完成待关闭 / R-003开发中 / R-004临期 / R-005待排期 / "
+            "R-007催办无响应 / R-008状态停滞 / R-009状态回退 / R-010反复催办。"
+            "若提供 db_path 则执行历史依赖规则（R-007~R-010），否则仅执行无状态规则。"
         ),
         "input_schema": {
             "type": "object",
@@ -96,6 +99,10 @@ TOOL_SCHEMAS = [
                     "description": "read_excel 返回的 WorkItem 列表",
                     "items": {"type": "object"},
                 },
+                "db_path": {
+                    "type": "string",
+                    "description": "SQLite 路径（可选，提供则执行历史依赖规则）",
+                },
             },
             "required": ["work_items"],
         },
@@ -104,7 +111,8 @@ TOOL_SCHEMAS = [
         "name": "gen_message",
         "description": (
             "根据 reminder_type 选择模板，渲染 WeLink 消息文本。"
-            "支持 4 类模板: acceptance_confirm / progress_check / schedule_confirm / due_date_missing / close_confirm。"
+            "支持 9 类模板: acceptance_confirm / progress_check / schedule_confirm / "
+            "due_date_missing / close_confirm / data_quality / escalation / stagnation_alert / regression_alert。"
             "占位符未填值显示'未填写'，消息超过 max_length 自动截断。"
         ),
         "input_schema": {
@@ -113,7 +121,11 @@ TOOL_SCHEMAS = [
                 "item_id": {"type": "string", "description": "事项 ID"},
                 "reminder_type": {
                     "type": "string",
-                    "enum": ["acceptance_confirm", "progress_check", "schedule_confirm", "due_date_missing", "close_confirm"],
+                    "enum": [
+                        "acceptance_confirm", "progress_check", "schedule_confirm",
+                        "due_date_missing", "close_confirm", "data_quality",
+                        "escalation", "stagnation_alert", "regression_alert",
+                    ],
                     "description": "跟催类型",
                 },
                 "context": {"type": "object", "description": "模板占位符填充数据（title, project, source, priority, handler, due_date, remark, status）"},
@@ -178,6 +190,27 @@ TOOL_SCHEMAS = [
                 "max_records": {"type": "integer", "description": "每种类型的最大记录数，默认 10"},
             },
             "required": ["item_id"],
+        },
+    },
+    {
+        "name": "write_project_report",
+        "description": (
+            "在 agent loop 结束时生成结构化项目巡检报告（PRD 要求），写入 state/reports/。"
+            "报告应采用 markdown 格式，必须包含以下章节："
+            "1) 项目总览（事项总数、活跃数、已闭环数）"
+            "2) 状态分布（按 normalized_status 统计）"
+            "3) 风险诊断 TOP5（高严重度事项，说明原因）"
+            "4) 趋势变化（相比上次报告的新增/闭环风险）"
+            "5) 建议行动（具体催办建议，含 item_id）。"
+            "同时自动存一份摘要到 context_brief 作为跨周期记忆。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "report_content": {"type": "string", "description": "完整的项目巡检报告（markdown）"},
+                "run_id": {"type": "string", "description": "本次运行 ID"},
+            },
+            "required": ["report_content", "run_id"],
         },
     },
 ]

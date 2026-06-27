@@ -2,9 +2,17 @@
 PM 已唤醒你，请开始本次项目跟催巡检。
 {% elif trigger_reason == 'cron' %}
 你被周期性触发（无人值守模式）。**你不能调 ask_human 和 send_welink**，只能读表、分析、写决策和 brief。
+{% elif trigger_reason == 'audit' %}
+审计模式：请审视当前项目跟踪体系的覆盖度、数据质量、跟踪节奏、规则覆盖情况并提供优化建议。
 {% else %}
 本次触发原因：{{ trigger_reason }}。
 {% endif %}
+
+## 关键路径
+
+- Excel 台账: `{{ excel_path }}`
+- Sheet: `{{ sheet_name }}`
+- SQLite 状态库: `{{ db_path }}`
 
 {% if prior_brief %}
 ## 上次结束时的项目状态（跨周期记忆）

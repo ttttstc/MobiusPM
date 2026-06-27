@@ -14,6 +14,8 @@ _TEMPLATE_PATH = _PROMPT_DIR / "initial_user.md.j2"
 def load_initial_context(
     trigger_reason: str = "wake",
     db_path: str | Path = DEFAULT_DB_PATH,
+    excel_path: str = "",
+    sheet_name: str = "",
     lookback_days: int = 14,
     recent_decision_limit: int = 20,
     recent_send_limit: int = 20,
@@ -81,36 +83,28 @@ def load_initial_context(
 
         # 渲染模板
         template = Template(_TEMPLATE_PATH.read_text(encoding="utf-8"))
-        rendered = template.render(
+        render_kwargs = dict(
             trigger_reason=trigger_reason,
             prior_brief=prior_brief,
             vanished_items=vanished_items,
             recent_decisions=recent_decisions,
             recent_sends=recent_sends,
             pending_candidates=pending_candidates,
+            excel_path=excel_path,
+            sheet_name=sheet_name,
+            db_path=str(db_path),
         )
+        rendered = template.render(**render_kwargs)
 
         # Token 预算裁剪
         if len(rendered) > max_total_chars:
             # 先裁 sends，再裁 decisions
-            rendered = template.render(
-                trigger_reason=trigger_reason,
-                prior_brief=prior_brief,
-                vanished_items=vanished_items,
-                recent_decisions=recent_decisions[:5],
-                recent_sends=[],
-                pending_candidates=pending_candidates,
-            )
+            render_kwargs.update(recent_decisions=recent_decisions[:5], recent_sends=[])
+            rendered = template.render(**render_kwargs)
             if len(rendered) > max_total_chars:
                 # 再裁 decisions
-                rendered = template.render(
-                    trigger_reason=trigger_reason,
-                    prior_brief=prior_brief,
-                    vanished_items=vanished_items,
-                    recent_decisions=[],
-                    recent_sends=[],
-                    pending_candidates=pending_candidates,
-                )
+                render_kwargs.update(recent_decisions=[], recent_sends=[])
+                rendered = template.render(**render_kwargs)
 
         return rendered
     finally:

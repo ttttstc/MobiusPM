@@ -35,6 +35,8 @@ def _load_system_prompt(cron_mode: bool = False) -> str:
 
 def _call_tool(name: str, args: dict, injected: dict | None = None) -> Any:
     """动态调用工具函数。injected 用于注入 run_id / notifier 等运行时依赖。"""
+    import inspect
+
     fq_name = TOOL_REGISTRY.get(name)
     if not fq_name:
         return {"error": f"unknown tool: {name}"}
@@ -45,7 +47,11 @@ def _call_tool(name: str, args: dict, injected: dict | None = None) -> Any:
 
     merged = {**args}
     if injected:
-        merged.update(injected)
+        # 只注入函数签名中存在的参数，避免 unexpected keyword argument
+        sig_params = set(inspect.signature(func).parameters.keys())
+        for k, v in injected.items():
+            if k in sig_params and k not in merged:
+                merged[k] = v
 
     return func(**merged)
 
@@ -71,6 +77,7 @@ def run_agent(
     trigger_reason: str = "wake",
     system_prompt: str | None = None,
     api_key: str | None = None,
+    base_url: str | None = None,
     model: str = "claude-opus-4-7",
     max_tokens: int = 4096,
     max_tokens_per_loop: int = 50000,
@@ -86,6 +93,9 @@ def run_agent(
     """
     run_id = f"{trigger_reason}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     cron_mode = trigger_reason == "cron"
+    audit_mode = trigger_reason == "audit"
+    # cron 和 audit 模式都禁止发送/人工交互
+    no_send_mode = cron_mode or audit_mode
 
     # Logger
     log_dir = Path("state/agent_runs")
@@ -94,14 +104,19 @@ def run_agent(
     # System prompt
     sys_prompt = system_prompt or _load_system_prompt(cron_mode)
 
-    # Initial user message（含跨周期记忆）
+    # Initial user message（含跨周期记忆 + 关键路径）
     initial_user = load_initial_context(
         trigger_reason=trigger_reason,
         db_path=db_path,
+        excel_path=excel_path,
+        sheet_name=sheet_name,
     )
 
-    # Anthropic client
-    client = Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY", ""))
+    # Anthropic client（base_url 支持自定义 endpoint / 代理）
+    client_kwargs = {"api_key": api_key or os.environ.get("ANTHROPIC_API_KEY", "")}
+    if base_url:
+        client_kwargs["base_url"] = base_url
+    client = Anthropic(**client_kwargs)
 
     messages: list[dict] = [{"role": "user", "content": initial_user}]
     total_input_tokens = 0
@@ -187,8 +202,8 @@ def run_agent(
 
                     # 执行工具
                     try:
-                        # cron 模式下禁用 ask_human / send_welink
-                        if cron_mode and tool_name in ("ask_human", "send_welink"):
+                        # cron/audit 模式下禁用 ask_human / send_welink
+                        if no_send_mode and tool_name in ("ask_human", "send_welink"):
                             result = {"status": "unavailable", "reason": "cron_mode",
                                       "message": "PM 不在场，不能发送消息。请改为写 decision 记录此判断。"}
                             logger.log({"event": "tool_result", "name": tool_name, "success": False, "result": result})
@@ -224,10 +239,13 @@ def run_agent(
                             "error": str(e),
                         })
 
+                    result_json = json.dumps(result, ensure_ascii=False)
+                    # 截断过大的工具结果，防止上下文爆炸（保留头部 + 截断提示）
+                    result_json = _truncate_tool_result(result_json, max_chars=6000)
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": json.dumps(result, ensure_ascii=False),
+                        "content": result_json,
                     })
 
                 messages.append({"role": "user", "content": tool_results})
@@ -288,6 +306,21 @@ def _force_end(
     except Exception:
         # 无论如何写一条 brief
         store.insert_brief(run_id, f"Budget exceeded at {token_used} tokens", token_used)
+
+
+def _truncate_tool_result(result_json: str, max_chars: int = 6000) -> str:
+    """截断过大的工具结果，避免上下文 token 爆炸。"""
+    if len(result_json) <= max_chars:
+        return result_json
+    # 保留前 max_chars 字符 + 截断提示
+    cutoff = max_chars - 200
+    truncated = result_json[:cutoff]
+    omitted = len(result_json) - cutoff
+    return (
+        truncated
+        + f'\n..."(truncated: {omitted} chars omitted, '
+        + f'original total {len(result_json)} chars)"'
+    )
 
 
 def _brief_args(args: dict) -> str:

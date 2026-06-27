@@ -1,4 +1,4 @@
-"""统一配置加载 — env var + YAML 合并"""
+"""统一配置加载 — env var + YAML 合并，业界标准 llm: 块"""
 from __future__ import annotations
 
 import os
@@ -8,36 +8,43 @@ import yaml
 
 _DEFAULT_CONFIG = Path("config/pm-agent.yaml")
 
+# 默认值定义（只维护一处）
+_DEFAULTS = {
+    "llm": {
+        "provider": "anthropic",
+        "model": "claude-opus-4-7",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "base_url": None,  # 自定义 endpoint（代理/兼容 API），None=用官方默认
+        "max_tokens": 4096,
+        "max_tokens_per_loop": 50000,
+        "temperature": 0.3,
+    },
+    "excel": {"path": "source/项目630流水线排期计划.xlsx", "sheet": "630攻关问题清单"},
+    "memory": {"db_path": "state/pm-agent.db", "lookback_days": 14, "recent_decision_limit": 20, "max_briefs": 30},
+    "notifier": {"mode": "mock", "welink": {"cli_path": "welink", "timeout": 30, "retry_count": 1}},
+    "reminder": {"max_per_owner_per_day": 5, "max_per_run": 50},
+    "daemon": {"cron_interval_minutes": 60, "cron_at": "09:00"},
+}
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge(base[k], v)
+        else:
+            base[k] = v
+    return base
+
 
 def load_config(path: str | Path = _DEFAULT_CONFIG) -> dict:
-    cfg: dict = {}
     p = Path(path)
-    if p.exists():
-        with open(p, encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
+    cfg: dict = _deep_merge(
+        {k: v.copy() if isinstance(v, dict) else v for k, v in _DEFAULTS.items()},
+        yaml.safe_load(p.read_text(encoding="utf-8")) if p.exists() else {},
+    )
 
-    # API key: 优先 env var
-    if not cfg.get("anthropic", {}).get("api_key"):
-        cfg.setdefault("anthropic", {})["api_key"] = os.environ.get(
-            "ANTHROPIC_API_KEY", ""
-        )
-
-    # 默认值填充
-    cfg.setdefault("anthropic", {}).setdefault("model", "claude-opus-4-7")
-    cfg.setdefault("anthropic", {}).setdefault("max_tokens", 4096)
-    cfg.setdefault("anthropic", {}).setdefault("max_tokens_per_loop", 50000)
-    cfg.setdefault("excel", {}).setdefault("path", "source/项目630流水线排期计划.xlsx")
-    cfg.setdefault("excel", {}).setdefault("sheet", "630攻关问题清单")
-    cfg.setdefault("memory", {}).setdefault("db_path", "state/pm-agent.db")
-    cfg.setdefault("memory", {}).setdefault("lookback_days", 14)
-    cfg.setdefault("memory", {}).setdefault("recent_decision_limit", 20)
-    cfg.setdefault("memory", {}).setdefault("max_briefs", 30)
-    cfg.setdefault("notifier", {}).setdefault("mode", "mock")
-    cfg.setdefault("notifier", {}).setdefault("welink", {}).setdefault("cli_path", "welink")
-    cfg.setdefault("notifier", {}).setdefault("welink", {}).setdefault("timeout", 30)
-    cfg.setdefault("notifier", {}).setdefault("welink", {}).setdefault("retry_count", 1)
-    cfg.setdefault("reminder", {}).setdefault("max_per_owner_per_day", 5)
-    cfg.setdefault("reminder", {}).setdefault("max_per_run", 50)
-    cfg.setdefault("mode", "wake")
+    # API key: 从 env var 读取（key 名由 llm.api_key_env 指定）
+    api_key_env = cfg["llm"].get("api_key_env", "ANTHROPIC_API_KEY")
+    cfg["llm"]["api_key"] = os.environ.get(api_key_env, "")
 
     return cfg

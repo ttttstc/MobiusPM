@@ -1,0 +1,22 @@
+[project]
+name = "MobiusPM"
+version = "0.1.0"
+description = "PM Agent — 项目跟催自动化，读 Excel → 规则分析 → LLM 决策 → WeLink 发送"
+requires-python = ">=3.10"
+dependencies = [
+    "openpyxl>=3.1.0",
+    "pyyaml>=6.0",
+    "jinja2>=3.1.0",
+    "anthropic>=0.49.0",
+    "schedule>=1.2.0",
+]
+
+[project.scripts]
+mpm = "pm_agent.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["pm_agent", "pm_agent.*"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"

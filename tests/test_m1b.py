@@ -68,7 +68,7 @@ class TestRuleSuggestions:
 
         r = read_excel(EXCEL_PATH)
         result = query_rule_suggestions(r["items"])
-        assert 67 <= result["count"] <= 134, f"Got {result['count']}"
+        assert 67 <= result["count"] <= 200, f"Got {result['count']}"  # 新规则(DQ-002/DQ-003/R-007~010)增加约80条建议
 
 
 # ═══════════════════════════════════════════════════════════════════

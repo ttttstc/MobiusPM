@@ -138,7 +138,7 @@ class TestMemoryLoader:
 class TestConfig:
     def test_load_default_config(self):
         cfg = load_config()
-        assert "anthropic" in cfg
+        assert "llm" in cfg
         assert "excel" in cfg
         assert "memory" in cfg
         assert "notifier" in cfg
@@ -146,20 +146,22 @@ class TestConfig:
 
     def test_config_defaults(self):
         cfg = load_config()
-        assert cfg["anthropic"]["model"] == "claude-opus-4-7"
-        assert cfg["anthropic"]["max_tokens"] == 4096
+        assert cfg["llm"]["model"] == "claude-opus-4-7"
+        assert cfg["llm"]["max_tokens"] == 4096
+        assert cfg["llm"]["provider"] == "anthropic"
         assert cfg["memory"]["db_path"] == "state/pm-agent.db"
         assert cfg["notifier"]["mode"] == "mock"
         assert cfg["reminder"]["max_per_owner_per_day"] == 5
+        assert cfg["daemon"]["cron_interval_minutes"] == 60
 
     def test_config_env_api_key(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-123")
         cfg = load_config()
-        assert cfg["anthropic"]["api_key"] == "test-key-123"
+        assert cfg["llm"]["api_key"] == "test-key-123"
 
     def test_config_missing_file(self):
         cfg = load_config("nonexistent.yaml")
-        assert "anthropic" in cfg  # defaults still filled
+        assert "llm" in cfg  # defaults still filled
 
 
 # ═══════════════════════════════════════════
@@ -296,6 +298,46 @@ class TestMockNotifier:
 # ═══════════════════════════════════════════
 # Ask human 增强展示测试
 # ═══════════════════════════════════════════
+
+
+class TestWriteReport:
+    def test_write_report(self, tmp_path):
+        from pm_agent.tools.report import write_project_report, _REPORT_DIR
+        import pm_agent.tools.report as rmod
+        original_dir = rmod._REPORT_DIR
+        try:
+            rmod._REPORT_DIR = tmp_path / "reports"
+            result = write_project_report(
+                "# 项目巡检报告\n\n## 一、项目总览\n- 总数: 10",
+                run_id="test_run",
+                db_path=":memory:",
+            )
+            assert result["status"] == "ok"
+            assert result["char_count"] > 0
+            assert "brief_id" in result
+            report_path = Path(result["report_path"])
+            assert report_path.exists()
+            content = report_path.read_text(encoding="utf-8")
+            assert "项目巡检报告" in content
+        finally:
+            rmod._REPORT_DIR = original_dir
+
+    def test_write_empty_report(self):
+        from pm_agent.tools.report import write_project_report
+        result = write_project_report("", run_id="test", db_path=":memory:")
+        assert result["status"] == "error"
+
+    def test_report_dir_created(self, tmp_path):
+        from pm_agent.tools.report import write_project_report, _REPORT_DIR
+        import pm_agent.tools.report as rmod
+        original_dir = rmod._REPORT_DIR
+        new_dir = tmp_path / "deep" / "reports"
+        try:
+            rmod._REPORT_DIR = new_dir
+            write_project_report("test", run_id="t1", db_path=":memory:")
+            assert new_dir.exists()
+        finally:
+            rmod._REPORT_DIR = original_dir
 
 
 class TestAskHumanDisplay:
