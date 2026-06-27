@@ -1,0 +1,10 @@
+excel:
+  path: "source/项目630流水线排期计划.xlsx"
+  sheet: "630攻关问题清单"
+
+memory:
+  db_path: "state/pm-agent.db"
+
+reminder:
+  max_per_owner_per_day: 5
+  max_per_run: 50
