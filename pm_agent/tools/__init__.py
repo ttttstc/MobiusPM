@@ -11,6 +11,7 @@ TOOL_REGISTRY = {
     "ask_human": "pm_agent.tools.human.ask_human",
     "query_history": "pm_agent.tools.state.query_history",
     "write_project_report": "pm_agent.tools.report.write_project_report",
+    "write_html_dashboard": "pm_agent.tools.dashboard.write_html_dashboard",
 }
 
 TOOL_SCHEMAS = [
@@ -211,6 +212,30 @@ TOOL_SCHEMAS = [
                 "run_id": {"type": "string", "description": "本次运行 ID"},
             },
             "required": ["report_content", "run_id"],
+        },
+    },
+    {
+        "name": "write_html_dashboard",
+        "description": (
+            "生成项目大盘 HTML 看板（DESIGN.md 视觉系统）。"
+            "输入 read_excel 返回的 WorkItem 列表，可选 db_path 启用历史依赖规则。"
+            "输出单文件自包含 HTML（CSS inline、JS inline、无外链）到 state/dashboards/，"
+            "PM 可邮件发送或浏览器本地打开。文件大小通常 < 30KB。"
+            "看板分三层：项目总览（4 数字面板）→ 风险明细（高/中风险表格）→ 建议行动（按 reminder_type 分组）。"
+            "建议在 write_project_report 之后调用，作为可视化补充。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "work_items": {
+                    "type": "array",
+                    "description": "read_excel 返回的 WorkItem 列表",
+                    "items": {"type": "object"},
+                },
+                "run_id": {"type": "string", "description": "本次运行 ID"},
+                "db_path": {"type": "string", "description": "SQLite 路径（可选，提供则启用 R-007~R-010）"},
+            },
+            "required": ["work_items", "run_id"],
         },
     },
 ]
