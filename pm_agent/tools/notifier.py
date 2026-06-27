@@ -28,7 +28,59 @@ class MockNotifier:
         self._output.parent.mkdir(parents=True, exist_ok=True)
 
     def send(self, to: str, message: str) -> dict:
-        return {"success": True, "message_id": f"mock_{datetime.now().timestamp():.0f}", "error": None}
+        entry = {
+            "to": to,
+            "message": message,
+            "timestamp": datetime.now().isoformat(),
+            "message_id": f"mock_{datetime.now().timestamp():.0f}",
+        }
+        with open(self._output, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        return {"success": True, "message_id": entry["message_id"], "error": None}
+
+
+class WeLinkCliNotifier:
+    """真实 WeLink CLI 发送器 — 调用外部 welink 命令发送消息。"""
+
+    def __init__(
+        self,
+        cli_path: str = "welink",
+        timeout: int = 30,
+        retry_count: int = 1,
+    ):
+        self._cli = cli_path
+        self._timeout = timeout
+        self._retry = retry_count
+
+    def send(self, to: str, message: str) -> dict:
+        import subprocess
+        import time
+
+        last_error = None
+        for attempt in range(self._retry + 1):
+            try:
+                result = subprocess.run(
+                    [self._cli, "send", "--to", to, "--message", message],
+                    capture_output=True,
+                    text=True,
+                    timeout=self._timeout,
+                )
+                if result.returncode == 0:
+                    return {
+                        "success": True,
+                        "message_id": result.stdout.strip() or f"wl_{int(time.time())}",
+                        "error": None,
+                    }
+                last_error = result.stderr.strip() or f"exit code {result.returncode}"
+            except subprocess.TimeoutExpired:
+                last_error = f"timeout after {self._timeout}s"
+            except FileNotFoundError:
+                last_error = f"welink CLI not found at {self._cli}"
+                break
+            except Exception as e:
+                last_error = str(e)
+
+        return {"success": False, "message_id": None, "error": last_error}
 
 
 # ── 内存中的 confirmation token 存储（本次 loop 有效）──

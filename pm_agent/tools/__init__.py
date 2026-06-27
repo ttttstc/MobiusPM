@@ -9,6 +9,7 @@ TOOL_REGISTRY = {
     "gen_message": "pm_agent.tools.messages.gen_message",
     "send_welink": "pm_agent.tools.notifier.send_welink",
     "ask_human": "pm_agent.tools.human.ask_human",
+    "query_history": "pm_agent.tools.state.query_history",
 }
 
 TOOL_SCHEMAS = [
@@ -161,6 +162,22 @@ TOOL_SCHEMAS = [
                 "run_id": {"type": "string", "description": "本次运行 ID"},
             },
             "required": ["candidates", "run_id"],
+        },
+    },
+    {
+        "name": "query_history",
+        "description": (
+            "查询某个事项的完整历史记录：状态变化、催办记录、决策记录。"
+            "返回时间序列数据，帮助 agent 在做决策前了解事项的前因后果。"
+            "与 query_state 的区别：query_state 返回当前快照，query_history 返回时间序列。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "item_id": {"type": "string", "description": "事项 ID"},
+                "max_records": {"type": "integer", "description": "每种类型的最大记录数，默认 10"},
+            },
+            "required": ["item_id"],
         },
     },
 ]

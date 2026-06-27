@@ -1,0 +1,55 @@
+{% if trigger_reason == 'wake' %}
+PM 已唤醒你，请开始本次项目跟催巡检。
+{% elif trigger_reason == 'cron' %}
+你被周期性触发（无人值守模式）。**你不能调 ask_human 和 send_welink**，只能读表、分析、写决策和 brief。
+{% else %}
+本次触发原因：{{ trigger_reason }}。
+{% endif %}
+
+{% if prior_brief %}
+## 上次结束时的项目状态（跨周期记忆）
+
+{{ prior_brief }}
+{% endif %}
+
+{% if vanished_items %}
+## ⚠️ 上次扫到但本次消失的事项
+
+以下事项上次还在，本次 read_excel 未扫到，可能是 PM 改了原文或删除了：
+
+{% for item in vanished_items %}
+- {{ item.item_id }} (上次看到: {{ item.last_seen_at }})
+{% endfor %}
+
+请主动向 PM 确认这些事项的状态。
+{% endif %}
+
+{% if recent_decisions %}
+## 最近的决策历史
+
+{% for d in recent_decisions %}
+- [{{ d.created_at }}] {{ d.decision_type }}: {{ d.rationale | truncate(100) }}
+{% endfor %}
+{% endif %}
+
+{% if recent_sends %}
+## 最近的发送历史
+
+{% for s in recent_sends %}
+- [{{ s.created_at }}] {{ s.item_id }} → {{ s.owner }} ({{ s.send_status }})
+{% endfor %}
+{% endif %}
+
+{% if pending_candidates %}
+## 上次 cron 留下的待确认候选（PM 上线后应优先处理）
+
+{% for c in pending_candidates %}
+- {{ c.item_id }}: {{ c.reminder_type }} | {{ c.rationale_hint }}
+{% endfor %}
+{% endif %}
+
+---
+现在开始执行你的巡检流程。
+{% if trigger_reason == 'cron' %}
+⚠️ **再次提醒：你是 cron 模式，不能发送消息。只做分析、决策和 brief。**
+{% endif %}
