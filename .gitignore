@@ -1,0 +1,57 @@
+# Dependencies and build outputs
+node_modules/
+dist/
+dist-ssr/
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Local environment files
+*.local
+release*/
+
+# Desktop build artifacts and signing keys
+src-tauri/target/
+*.key
+
+# Editor and OS metadata
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.sln
+*.suo
+*.ntvs*
+*.njsproj
+*.sw?
+
+# Local tooling state
+.claude/
+.playwright-mcp/
+.worktrees/
+
+# Claude local state
+.claude/*
+source/
+
+# pm-agent 外置状态(本地运行产物,不入库)
+state/
+*.db
+*.db-journal
+*.db-wal
+
+# 联系人映射可能含工号/真名,不入库(提交 contacts.example.yaml)
+config/contacts.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
