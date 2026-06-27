@@ -85,13 +85,14 @@ def _build_suggestions(work_items: list[dict], db_path: str | Path | None = None
             # ── R 规则 ──
 
             # R-001: 待验收
+            # 注意：待验收是事项的正常流转状态，本身不是高风险，仅作为提示项
             if status == "待验收":
                 suggestions.append({
                     "item_id": item_id,
                     "rule_id": "R-001",
                     "reminder_type": "acceptance_confirm",
-                    "severity": "high",
-                    "rationale_hint": "待验收事项需要确认验收进展",
+                    "severity": "low",
+                    "rationale_hint": "待验收事项需确认验收进展（提示项，非高风险）",
                 })
 
             # R-001b: 待验收待关闭

@@ -57,6 +57,17 @@ class TestRuleSuggestions:
         r001 = [s for s in self.result["suggestions"] if s["rule_id"] == "R-001"]
         assert all(s["reminder_type"] in ("acceptance_confirm", "close_confirm") for s in r001)
 
+    def test_r001_is_advisory_not_high_risk(self):
+        """R-001 待验收 是提示项，不应作为高风险（用户要求 2026-06-28）。"""
+        r001_only = [
+            s for s in self.result["suggestions"]
+            if s["rule_id"] == "R-001" and s["reminder_type"] == "acceptance_confirm"
+        ]
+        assert len(r001_only) > 0
+        assert all(s["severity"] == "low" for s in r001_only), (
+            f"R-001 待验收 应为 low，实际：{set(s['severity'] for s in r001_only)}"
+        )
+
     def test_json_serializable(self):
         json.dumps(self.result, ensure_ascii=False)
 
