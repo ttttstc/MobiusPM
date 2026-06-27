@@ -1,0 +1,41 @@
+# 联系人映射模板 — 复制为 contacts.yaml 并填入真实 WeLink ID
+# contacts.yaml 含真名/工号 → gitignored，不入库
+contacts:
+  - name: 叶红达
+    welink_id: yehongda
+    enabled: true
+    aliases: []
+  - name: 曹禹
+    welink_id: caoyu
+    enabled: true
+    aliases: []
+  - name: 胡良艺
+    welink_id: huliangyi
+    enabled: true
+    aliases:
+      - 胡良艺(gitcode)
+  - name: 余嘉伟
+    welink_id: yujiawei
+    enabled: true
+    aliases: []
+  - name: 吴念
+    welink_id: wunian
+    enabled: true
+    aliases: []
+  - name: 刘少强
+    welink_id: liushaoqiang
+    enabled: true
+    aliases: []
+  - name: 苗艳星
+    welink_id: miaoyanxing
+    enabled: true
+    aliases: []
+  - name: 涂键
+    welink_id: tujian
+    enabled: true
+    aliases: []
+  - name: 李坤
+    welink_id: likun
+    enabled: true
+    aliases:
+      - 李坤(gitcode)
