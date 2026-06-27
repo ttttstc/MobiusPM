@@ -21,7 +21,9 @@ def cmd_debug(args: argparse.Namespace) -> None:
     cfg = _load_config()
     excel_path = Path(cfg.get("excel", {}).get("path", "source/项目630流水线排期计划.xlsx"))
     sheet_name = cfg.get("excel", {}).get("sheet", "630攻关问题清单")
-    db_path = Path(cfg.get("memory", {}).get("db_path", "state/pm-agent.db"))
+    from pm_agent.memory.store import DEFAULT_DB_PATH
+
+    db_path = Path(cfg.get("memory", {}).get("db_path", DEFAULT_DB_PATH))
 
     if args.tool == "read_excel":
         from pm_agent.tools.excel import read_excel

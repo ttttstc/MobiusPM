@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS follow_up_log (
   error         TEXT,
   created_at    TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_log_dedupe ON follow_up_log(dedupe_key);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_log_dedupe ON follow_up_log(dedupe_key);
 
 -- 决策日志（LLM 每次决策）
 CREATE TABLE IF NOT EXISTS decision_log (

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import openpyxl
 
@@ -73,7 +71,7 @@ def read_excel(
 
             # raw_no 可能是非纯数字（如 '146-1'），保留原始字符串
             raw_no = row[COL_NO]
-            raw_no_str: Optional[str] = None
+            raw_no_str: str | None = None
             if raw_no is not None:
                 raw_no_str = str(raw_no).strip()
             raw_issue_status = str(row[COL_ISSUE_STATUS] or "").strip()
@@ -102,7 +100,7 @@ def read_excel(
                 owner_list = []
 
             # 日期处理：openpyxl 直接读出 datetime
-            due_date: Optional[str] = None
+            due_date: str | None = None
             if due_raw is not None:
                 if isinstance(due_raw, datetime):
                     due_date = due_raw.date().isoformat()
@@ -143,11 +141,12 @@ def read_excel(
     finally:
         wb.close()
 
-    # mtime 不变校验
+    # mtime 不变校验（不用 assert，python -O 会剥离）
     final_mtime = excel_path.stat().st_mtime
-    assert initial_mtime == final_mtime, (
-        f"Excel mtime changed! before={initial_mtime}, after={final_mtime}"
-    )
+    if initial_mtime != final_mtime:
+        raise RuntimeError(
+            f"Excel mtime changed! before={initial_mtime}, after={final_mtime}"
+        )
 
     return {
         "items": [it.to_dict() for it in items],

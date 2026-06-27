@@ -3,9 +3,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from pm_agent.memory.store import Store
-
-_DEFAULT_DB = Path("state/pm-agent.db")
+from pm_agent.memory.store import DEFAULT_DB_PATH, Store
 
 
 def dedupe_key(item_id: str, reminder_type: str, date_str: str | None = None) -> str:
@@ -18,7 +16,7 @@ def check_rate_limit(
     welink_id: str,
     today: str | None = None,
     max_per_day: int = 5,
-    db_path: str | Path = _DEFAULT_DB,
+    db_path: str | Path = DEFAULT_DB_PATH,
 ) -> dict:
     """
     检查单责任人当天发送上限。
@@ -41,7 +39,7 @@ def check_rate_limit(
 def check_run_limit(
     run_id: str,
     max_per_run: int = 50,
-    db_path: str | Path = _DEFAULT_DB,
+    db_path: str | Path = DEFAULT_DB_PATH,
 ) -> dict:
     """
     检查单次运行发送上限。
