@@ -207,17 +207,17 @@ class TestWriteHtmlDashboard:
         )
         html = Path(result["path"]).read_text(encoding="utf-8")
         assert "action-group" in html
-        # 至少有一类分组标题
+        # 至少有一类分组标题（中文标签）
         assert any(
             label in html
             for label in (
-                "ACCEPTANCE_CONFIRM",
-                "CLOSE_CONFIRM",
-                "PROGRESS_CHECK",
-                "SCHEDULE_CONFIRM",
-                "DUE_DATE_MISSING",
-                "DATA_QUALITY",
-                "ESCALATION",
+                "待验收确认",
+                "完成待关闭",
+                "进度确认",
+                "排期确认",
+                "缺截止日期",
+                "数据质量",
+                "升级处理",
             )
         )
 

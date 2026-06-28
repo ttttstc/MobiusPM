@@ -12,6 +12,10 @@ TOOL_REGISTRY = {
     "query_history": "pm_agent.tools.state.query_history",
     "write_project_report": "pm_agent.tools.report.write_project_report",
     "write_html_dashboard": "pm_agent.tools.dashboard.write_html_dashboard",
+    "record_snapshot": "pm_agent.tools.trend.record_snapshot",
+    "query_trend": "pm_agent.tools.trend.query_trend",
+    "query_owner_load": "pm_agent.tools.owner_load.query_owner_load",
+    "write_sponsor_brief": "pm_agent.tools.sponsor_brief.write_sponsor_brief",
 }
 
 TOOL_SCHEMAS = [
@@ -221,7 +225,7 @@ TOOL_SCHEMAS = [
             "输入 read_excel 返回的 WorkItem 列表，可选 db_path 启用历史依赖规则。"
             "输出单文件自包含 HTML（CSS inline、JS inline、无外链）到 state/dashboards/，"
             "PM 可邮件发送或浏览器本地打开。文件大小通常 < 30KB。"
-            "看板分三层：项目总览（4 数字面板）→ 风险明细（高/中风险表格）→ 建议行动（按 reminder_type 分组）。"
+            "看板分四层：项目总览 → 进度趋势 → 人员负载 → 风险明细 → 建议行动。"
             "建议在 write_project_report 之后调用，作为可视化补充。"
         ),
         "input_schema": {
@@ -236,6 +240,107 @@ TOOL_SCHEMAS = [
                 "db_path": {"type": "string", "description": "SQLite 路径（可选，提供则启用 R-007~R-010）"},
             },
             "required": ["work_items", "run_id"],
+        },
+    },
+    {
+        "name": "record_snapshot",
+        "description": (
+            "把本次 wake 的项目状态指标（总数/活跃/闭环/高风险/超期/优先级分布/状态分布/责任人总数）"
+            "写入 state/trend/{date}_{run_id}.json。**只能写不能改**：每个 run_id 一旦写入不覆盖，"
+            "用于永久可追溯。每次 wake 结束建议调用一次，作为下次的对比基准。"
+            "snapshot 文件大小 < 2KB。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "work_items": {
+                    "type": "array",
+                    "description": "read_excel 返回的 WorkItem 列表",
+                    "items": {"type": "object"},
+                },
+                "suggestions": {
+                    "type": "array",
+                    "description": "query_rule_suggestions 返回的建议列表",
+                    "items": {"type": "object"},
+                },
+                "run_id": {"type": "string", "description": "本次运行 ID"},
+                "trend_dir": {"type": "string", "description": "快照目录（默认 state/trend）"},
+            },
+            "required": ["work_items", "suggestions", "run_id"],
+        },
+    },
+    {
+        "name": "query_trend",
+        "description": (
+            "查询本次 vs 最近一次 snapshot 的差异和趋势判定（好转/持平/恶化）。"
+            "判定基于 high_risk / overdue / active 三项指标的 delta，"
+            "保守阈值 >3 项变化才计为恶化。首次运行返回 verdict.direction='首次运行'，"
+            "无历史对比时返回 verdict.direction='首次对比'。"
+            "建议在 Phase 1 完成后调用，获取趋势结果一并写入项目报告。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "本次运行 ID"},
+                "trend_dir": {"type": "string", "description": "快照目录（默认 state/trend）"},
+            },
+            "required": ["run_id"],
+        },
+    },
+    {
+        "name": "query_owner_load",
+        "description": (
+            "计算每个责任人的负载：活跃数（多人 owner 事项按 1/n 分摊）、P0 数、阻塞他人数、"
+            "周新增/闭环数、负载状态（过载/正常/清闲）、是否瓶颈（阻塞 ≥3 项 P0/P1）。"
+            "缺责任人不计入。可选 db_path 拉取近 7 天催办事件作为周新增近似。"
+            "建议在 dashboard 渲染前调用，结果并入 dashboard 的'人员负载' section。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "work_items": {
+                    "type": "array",
+                    "description": "read_excel 返回的 WorkItem 列表",
+                    "items": {"type": "object"},
+                },
+                "db_path": {
+                    "type": "string",
+                    "description": "SQLite 路径（可选，提供则拉取近 7 天催办事件）",
+                },
+            },
+            "required": ["work_items"],
+        },
+    },
+    {
+        "name": "write_sponsor_brief",
+        "description": (
+            "生成 Sponsor 一页 Brief markdown 文件到 state/sponsor_brief/{date}_{run_id}.md。"
+            "**强约束**：< 30 行、≤3 条 Ask、每条 Ask 含 事项/状态/动作/决策/截止 5 字段、"
+            "数字部分代码渲染（避免数字打架）。"
+            "Ask 必须可决策（每条 Sponsor 一次拍板能解决，不是'请关注'空话）。"
+            "不自动发送给 Sponsor，PM 决定是否转发。"
+            "建议在 Phase 1 完成后自动生成一次。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "work_items": {
+                    "type": "array",
+                    "description": "read_excel 返回的 WorkItem 列表",
+                    "items": {"type": "object"},
+                },
+                "suggestions": {
+                    "type": "array",
+                    "description": "query_rule_suggestions 返回的建议列表",
+                    "items": {"type": "object"},
+                },
+                "run_id": {"type": "string", "description": "本次运行 ID"},
+                "trend_snapshot": {"type": "object", "description": "query_trend 返回的 snapshot 字段（可选）"},
+                "trend_previous": {"type": "object", "description": "query_trend 返回的 previous 字段（可选）"},
+                "owner_load": {"type": "object", "description": "query_owner_load 返回结果（可选）"},
+                "output_dir": {"type": "string", "description": "输出目录（默认 state/sponsor_brief）"},
+            },
+            "required": ["work_items", "suggestions", "run_id"],
         },
     },
 ]

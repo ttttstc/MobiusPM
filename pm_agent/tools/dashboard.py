@@ -17,9 +17,12 @@ from pathlib import Path
 from jinja2 import Template
 
 from pm_agent.memory.store import DEFAULT_DB_PATH, Store
+from pm_agent.tools.owner_load import query_owner_load
 from pm_agent.tools.rules import query_rule_suggestions
+from pm_agent.tools.trend import query_trend
 
 _DASHBOARD_DIR = Path("state/dashboards")
+_TREND_DIR = Path("state/trend")
 
 _CSS = """\
 :root {
@@ -457,6 +460,209 @@ table.advisories tbody td {
 }
 table.advisories tbody tr:hover { background: var(--bg-hover); }
 
+/* ── Trend section ── */
+.trend-block {
+  border: 1px solid var(--bg-rule);
+  background: var(--bg-elev);
+  padding: var(--space-5);
+}
+.trend-headline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--bg-rule);
+  margin-bottom: var(--space-4);
+}
+.trend-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.trend-pill.trend-up   { color: var(--state-crit); }
+.trend-pill.trend-down { color: var(--state-ok); }
+.trend-pill.trend-flat { color: var(--ink-3); }
+.trend-pill.trend-none { color: var(--ink-3); }
+.trend-narrative {
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: var(--ink-1);
+  flex: 1 1 320px;
+}
+.trend-deltas {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--bg-rule);
+}
+.trend-delta {
+  padding: var(--space-3) var(--space-4);
+  border-right: 1px solid var(--bg-rule);
+}
+.trend-delta:last-child { border-right: none; }
+.trend-delta-label {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: var(--space-1);
+}
+.trend-delta-value {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.trend-delta-value.delta-up   { color: var(--state-crit); }
+.trend-delta-value.delta-down { color: var(--state-ok); }
+.trend-delta-value.delta-flat { color: var(--ink-2); }
+.trend-delta-meta {
+  margin-top: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--ink-3);
+}
+
+/* ── Owner load section ── */
+.owner-load-block {
+  border: 1px solid var(--bg-rule);
+  background: var(--bg-elev);
+  padding: var(--space-5);
+}
+.owner-load-summary {
+  display: flex;
+  gap: var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--bg-rule);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+.owner-load-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.owner-load-stat-label {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.owner-load-stat-value {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-1);
+}
+.owner-load-stat-value.crit { color: var(--state-crit); }
+.owner-load-stat-value.warn { color: var(--state-warn); }
+.owner-load-stat-value.ok { color: var(--state-ok); }
+table.owner-load {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+table.owner-load thead th {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--bg-rule);
+}
+table.owner-load tbody td {
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--bg-rule);
+  vertical-align: middle;
+}
+table.owner-load tbody tr:hover { background: var(--bg-hover); }
+table.owner-load tbody tr.owner-overload { background: rgba(64% 0.22 25 / 0.06); }
+table.owner-load tbody tr.owner-bottleneck { background: rgba(64% 0.22 25 / 0.10); }
+.col-owner-name { width: 140px; font-family: var(--font-mono); color: var(--ink-1); font-weight: 500; }
+.col-owner-active { width: 80px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.col-owner-p0 { width: 60px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.col-owner-block { width: 70px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.col-owner-status { width: 80px; }
+.owner-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  letter-spacing: 0.02em;
+}
+.owner-status-badge.status-overload { color: var(--state-crit); }
+.owner-status-badge.status-idle { color: var(--ink-3); }
+.owner-status-badge.status-normal { color: var(--state-ok); }
+.owner-bottleneck-mark {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 1px 4px;
+  background: var(--state-crit);
+  color: var(--bg);
+  margin-left: var(--space-2);
+  letter-spacing: 0.04em;
+}
+.owner-items-list {
+  margin-top: var(--space-1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+.owner-item-tag {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  padding: 1px 5px;
+  border: 1px solid var(--bg-rule);
+  color: var(--ink-2);
+  background: var(--bg);
+}
+.owner-item-tag.p0 {
+  color: var(--state-crit);
+  border-color: oklch(45% 0.16 25);
+}
+
+@media (max-width: 1023px) {
+  .trend-deltas { grid-template-columns: repeat(2, 1fr); }
+  .trend-delta:nth-child(2) { border-right: none; }
+  .trend-delta:nth-child(1), .trend-delta:nth-child(2) { border-bottom: 1px solid var(--bg-rule); }
+  table.owner-load thead { display: none; }
+  table.owner-load tbody td { display: block; padding: var(--space-1) 0; border: none; }
+  table.owner-load tbody tr {
+    display: block;
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--bg-rule);
+  }
+  .col-owner-name, .col-owner-active, .col-owner-p0, .col-owner-block, .col-owner-status {
+    width: auto; display: inline-block; margin-right: var(--space-3);
+  }
+}
+@media (max-width: 639px) {
+  .trend-block, .owner-load-block { padding: var(--space-4); }
+  .trend-headline { flex-direction: column; align-items: flex-start; }
+  .trend-deltas { grid-template-columns: 1fr; }
+  .trend-delta { border-right: none; border-bottom: 1px solid var(--bg-rule); }
+  .trend-delta:last-child { border-bottom: none; }
+}
+
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
@@ -601,6 +807,91 @@ _TEMPLATE = Template("""\
         {% endfor %}
       </ul>
     </div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="section dash-trend" aria-labelledby="sec-trend">
+  <h2 id="sec-trend" class="section-title">进度趋势</h2>
+  <div class="trend-block">
+    <div class="trend-headline">
+      <span class="trend-pill {{ trend.trend_class }}" aria-label="趋势判定">
+        <span class="pill-glyph" aria-hidden="true">{{ trend.glyph }}</span>
+        <span>{{ trend.direction }}</span>
+      </span>
+      <span class="trend-narrative">{{ trend.narrative }}</span>
+    </div>
+    {% if trend.deltas %}
+    <div class="trend-deltas" role="group" aria-label="关键指标变化">
+      {% for d in trend.deltas %}
+      <div class="trend-delta">
+        <div class="trend-delta-label">{{ d.label }}</div>
+        <div class="trend-delta-value {{ d.delta_class }}">{{ d.value }}</div>
+        <div class="trend-delta-meta">{{ d.meta }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="section dash-owner-load" aria-labelledby="sec-owner-load">
+  <h2 id="sec-owner-load" class="section-title">人员负载</h2>
+  <div class="owner-load-block">
+    <div class="owner-load-summary">
+      <div class="owner-load-stat">
+        <span class="owner-load-stat-label">责任人总数</span>
+        <span class="owner-load-stat-value">{{ owner_load.summary.owner_count }}</span>
+      </div>
+      <div class="owner-load-stat">
+        <span class="owner-load-stat-label">过载</span>
+        <span class="owner-load-stat-value {% if owner_load.summary.overloaded_count > 0 %}crit{% endif %}">{{ owner_load.summary.overloaded_count }}</span>
+      </div>
+      <div class="owner-load-stat">
+        <span class="owner-load-stat-label">瓶颈</span>
+        <span class="owner-load-stat-value {% if owner_load.summary.bottleneck_count > 0 %}crit{% endif %}">{{ owner_load.summary.bottleneck_count }}</span>
+      </div>
+    </div>
+    {% if owner_load.owners %}
+    <table class="owner-load">
+      <thead>
+        <tr>
+          <th class="col-owner-name">Owner</th>
+          <th class="col-owner-active">活跃</th>
+          <th class="col-owner-p0">P0</th>
+          <th class="col-owner-block">阻塞</th>
+          <th class="col-owner-status">状态</th>
+          <th>关键事项</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in owner_load.owners %}
+        <tr class="{% if o.is_bottleneck %}owner-bottleneck{% elif o.status == '过载' %}owner-overload{% endif %}">
+          <td class="col-owner-name">
+            {{ o.owner }}
+            {% if o.is_bottleneck %}<span class="owner-bottleneck-mark" title="瓶颈：阻塞 ≥3 个 P0/P1">瓶颈</span>{% endif %}
+          </td>
+          <td class="col-owner-active">{{ o.active }}</td>
+          <td class="col-owner-p0 {% if o.p0 > 3 %}crit{% endif %}">{{ o.p0 }}</td>
+          <td class="col-owner-block {% if o.blocking_count >= 3 %}crit{% endif %}">{{ o.blocking_count }}</td>
+          <td class="col-owner-status">
+            <span class="owner-status-badge status-{{ o.status_class }}" aria-label="负载状态">{{ o.status }}</span>
+          </td>
+          <td>
+            {% if o['items'] %}
+            <div class="owner-items-list">
+              {% for it in o['items'] %}
+              <span class="owner-item-tag {% if it.priority == 'P0' %}p0{% endif %}" title="{{ it.title }} · {{ it.due_date or '无日期' }} · {{ it.status }}">{{ it.item_id_short }} {{ it.priority }}</span>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">无可统计的 Owner 数据</div>
     {% endif %}
   </div>
 </section>
@@ -757,15 +1048,15 @@ _STATUS_MAP = {
 }
 
 _REMINDER_LABEL = {
-    "acceptance_confirm": "ACCEPTANCE_CONFIRM",
-    "close_confirm": "CLOSE_CONFIRM",
-    "progress_check": "PROGRESS_CHECK",
-    "schedule_confirm": "SCHEDULE_CONFIRM",
-    "due_date_missing": "DUE_DATE_MISSING",
-    "data_quality": "DATA_QUALITY",
-    "escalation": "ESCALATION",
-    "stagnation_alert": "STAGNATION",
-    "regression_alert": "REGRESSION",
+    "acceptance_confirm": "待验收确认",
+    "close_confirm": "完成待关闭",
+    "progress_check": "进度确认",
+    "schedule_confirm": "排期确认",
+    "due_date_missing": "缺截止日期",
+    "data_quality": "数据质量",
+    "escalation": "升级处理",
+    "stagnation_alert": "停滞预警",
+    "regression_alert": "状态回退",
 }
 
 
@@ -811,12 +1102,12 @@ _RISK_CATEGORY = {
 _NEXT_ACTION = {
     "R-001": lambda it: "今天联系责任人确认验收进展；如有阻塞找 Owner 拉群对账",
     "R-002": lambda it: "今天内确认是否可以关闭；否则转 PM 决策延期",
-    "R-003": lambda it: "今天 17:00 前拉群对齐进度；如阻塞找 Sponsor 升级",
+    "R-003": lambda it: "今天 17:00 前拉群对齐进度；如阻塞找上级升级",
     "R-004": lambda it: "今天确认剩余工作量；明天前给出可完成节点",
     "R-005": lambda it: "今天拉强制排期会议；产出明确责任人 + 时间",
-    "R-007": lambda it: "今天通过 Sponsor 渠道升级；同步测试/上下游团队",
+    "R-007": lambda it: "今天通过上级渠道升级；同步测试/上下游团队",
     "R-008": lambda it: "今天确认事项状态；停滞 >30 天的重新评估优先级",
-    "R-009": lambda it: "今天做根因分析；曾闭环又出现需 Sponsor 介入",
+    "R-009": lambda it: "今天做根因分析；曾闭环又出现需上级介入",
     "R-010": lambda it: "今天评估升级或调整策略；≥2 次同类型催办建议重新指定 Owner",
     "DQ-001": lambda it: "今天指派 Owner；标注为不可催办，需人工分配",
     "DQ-002": lambda it: "今天评估负载再分配；考虑加 Owner 或延期",
@@ -827,12 +1118,12 @@ _NEXT_ACTION = {
 _ESCALATION_PATH = {
     "R-001": "Owner → PM",
     "R-002": "Owner → PM",
-    "R-003": "Owner → Sponsor（影响 630 节点）",
+    "R-003": "Owner → 上级（影响 630 节点）",
     "R-004": "Owner → PM",
     "R-005": "PM 强制排期会议",
-    "R-007": "Owner → Sponsor → 跨团队 Sponsor",
+    "R-007": "Owner → 上级 → 跨团队上级",
     "R-008": "Owner → PM（重新评估优先级）",
-    "R-009": "PM → Sponsor（根因分析）",
+    "R-009": "PM → 上级（根因分析）",
     "R-010": "PM 评估 → 调整 Owner 或重定策略",
     "DQ-001": "PM 手动指派（不可自动催）",
     "DQ-002": "PM 评估负载再分配",
@@ -1065,13 +1356,13 @@ def _build_risk_summary(
     # 关键观察（PM 视角）
     observations = []
     if has_p0_overdue:
-        observations.append("P0 已超期且未闭环，今天必须升级到 Sponsor")
+        observations.append("P0 已超期且未闭环，今天必须升级到上级")
     if overdue_count:
         observations.append(f"{overdue_count} 项已超期未闭环（不限于 P0）")
     if has_regression:
         observations.append("存在状态回退，曾闭环事项重新出现，需根因分析")
     if has_no_response:
-        observations.append("存在催办无响应，建议通过 Sponsor 渠道升级")
+        observations.append("存在催办无响应，建议通过上级渠道升级")
     if category_breakdown.get("资源"):
         observations.append(f"资源类问题 {category_breakdown['资源']} 项（缺责任人 / 负载过重）")
     if category_breakdown.get("依赖"):
@@ -1104,6 +1395,128 @@ def _build_risk_summary(
         "overdue_count": overdue_count,
         "category_breakdown": category_breakdown,
     }
+
+
+def _build_trend(run_id: str, trend_dir: str | Path) -> dict:
+    """构建 dashboard 用的趋势 section 数据。"""
+    result = query_trend(run_id, trend_dir=trend_dir)
+
+    direction = result["verdict"].get("direction", "首次运行")
+    glyph = result["verdict"].get("glyph", "■")
+    snapshot = result.get("snapshot")
+    diff = result.get("diff")
+
+    # trend pill class
+    if direction == "恶化":
+        trend_class = "trend-up"
+    elif direction == "好转":
+        trend_class = "trend-down"
+    elif direction in ("持平", "首次运行", "首次对比"):
+        trend_class = "trend-none"
+    else:
+        trend_class = "trend-flat"
+
+    # 叙事
+    prev_ts = result["verdict"].get("previous_timestamp")
+    prev_label = ""
+    if prev_ts:
+        prev_label = f"上次扫描 {prev_ts[:10]}"
+    elif direction == "首次运行":
+        prev_label = "尚无历史快照"
+    elif direction == "首次对比":
+        prev_label = "无上次数据可比"
+
+    if snapshot and diff:
+        narrative = (
+            f"{direction}（{prev_label}）。"
+            f"活跃 {diff['active']['current']}（{_format_delta(diff['active']['delta'])}），"
+            f"高风险 {diff['high_risk']['current']}（{_format_delta(diff['high_risk']['delta'])}），"
+            f"超期 {diff['overdue']['current']}（{_format_delta(diff['overdue']['delta'])}）"
+        )
+    elif snapshot:
+        narrative = f"{direction}（{prev_label}）。当前快照已记录。"
+    else:
+        narrative = f"{direction}（{prev_label}）。"
+
+    # delta cards
+    deltas: list[dict] = []
+    if snapshot:
+        for k, label in [("active", "活跃"), ("high_risk", "高风险"), ("overdue", "超期"), ("closed", "闭环")]:
+            cur = snapshot.get(k, 0)
+            prev = (diff or {}).get(k, {}).get("previous") if diff else None
+            if prev is not None:
+                delta = cur - prev
+                delta_class = _delta_class(delta, k)
+                meta = f"上次 {prev}"
+            else:
+                delta = None
+                delta_class = "delta-flat"
+                meta = "首次记录"
+            deltas.append({
+                "label": label,
+                "value": cur,
+                "delta_class": delta_class,
+                "meta": meta,
+            })
+    elif diff:
+        # 当前 snapshot 不存在但有 diff（极少见）
+        for k, label in [("active", "活跃"), ("high_risk", "高风险"), ("overdue", "超期"), ("closed", "闭环")]:
+            cur = diff[k]["current"]
+            prev = diff[k]["previous"]
+            delta = diff[k]["delta"]
+            delta_class = _delta_class(delta, k)
+            deltas.append({
+                "label": label,
+                "value": cur,
+                "delta_class": delta_class,
+                "meta": f"上次 {prev}",
+            })
+
+    return {
+        "direction": direction,
+        "glyph": glyph,
+        "trend_class": trend_class,
+        "narrative": narrative,
+        "deltas": deltas,
+        "snapshots_total": result.get("snapshots_total", 0),
+    }
+
+
+def _delta_class(delta: int, key: str) -> str:
+    """根据指标正负方向决定 delta_class 颜色。
+
+    规则：对于"风险类"指标（high_risk / overdue / active），
+    上升是坏的（delta-up = crit 色），下降是好的（delta-down = ok 色）；
+    对于"闭环"指标，上升是好的，下降是坏的。
+    """
+    if delta == 0:
+        return "delta-flat"
+    risk_keys = {"active", "high_risk", "overdue"}
+    good_keys = {"closed"}
+    if key in risk_keys:
+        return "delta-up" if delta > 0 else "delta-down"
+    if key in good_keys:
+        return "delta-down" if delta > 0 else "delta-up"
+    return "delta-flat"
+
+
+def _format_delta(delta: int) -> str:
+    if delta > 0:
+        return f"+{delta}"
+    if delta < 0:
+        return str(delta)
+    return "±0"
+
+
+def _build_owner_load_data(work_items: list[dict], db_path: str | Path | None) -> dict:
+    """构建 dashboard 用的人员负载数据。"""
+    result = query_owner_load(work_items, db_path=db_path)
+    status_to_class = {"过载": "overload", "正常": "normal", "清闲": "idle"}
+    for o in result["owners"]:
+        o["status_class"] = status_to_class.get(o["status"], "normal")
+        for it in o.get("items", []):
+            it["item_id_short"] = it["item_id"][:8]
+    return result
 
 
 def _build_action_groups(
@@ -1223,6 +1636,10 @@ def write_html_dashboard(
         else:
             g["overflow"] = False
 
+    # 趋势 + Owner 负载
+    trend = _build_trend(run_id, trend_dir=_TREND_DIR)
+    owner_load = _build_owner_load_data(work_items, db_path)
+
     # 3) 渲染 HTML
     now = datetime.now(timezone.utc)
     ctx = {
@@ -1233,6 +1650,8 @@ def write_html_dashboard(
         "db_path": str(db_path) if db_path else "",
         "stats": stats,
         "risk_summary": risk_summary,
+        "trend": trend,
+        "owner_load": owner_load,
         "risks": risks,
         "risk_overflow": risk_overflow,
         "advisories": advisories,
