@@ -552,7 +552,7 @@ _TEMPLATE = Template("""\
 </section>
 
 <section class="section dash-summary" aria-labelledby="sec-summary">
-  <h2 id="sec-summary" class="section-title">总体风险总结（P8 PM 视角）</h2>
+  <h2 id="sec-summary" class="section-title">总体风险总结（PM 视角）</h2>
   <div class="summary-block">
     <div class="summary-headline">
       <span class="health-pill pill-{{ risk_summary.health_class }}" aria-label="整体健康度">
@@ -790,7 +790,7 @@ _RISK_TYPE_LABEL = {
     "DQ-003": lambda it: "缺截止日期",
 }
 
-# PM 风险类别（P8 视角，不直接用规则 ID 跟 PM 沟通）
+# PM 风险类别（不直接用规则 ID 跟 PM 沟通）
 # 进度 / 范围 / 质量 / 资源 / 依赖 / 干系人 / 数据质量
 _RISK_CATEGORY = {
     "R-001": ("进度", "schedule"),
@@ -807,7 +807,7 @@ _RISK_CATEGORY = {
     "DQ-003": ("范围", "scope"),
 }
 
-# 24h 动作模板（P8 PM 视角，避免"催办"空话）
+# 24h 动作模板（避免"催办"空话）
 _NEXT_ACTION = {
     "R-001": lambda it: "今天联系责任人确认验收进展；如有阻塞找 Owner 拉群对账",
     "R-002": lambda it: "今天内确认是否可以关闭；否则转 PM 决策延期",
@@ -823,7 +823,7 @@ _NEXT_ACTION = {
     "DQ-003": lambda it: "今天补录计划时间；P0/P1 必须有截止日期",
 }
 
-# 升级路径（P8 PM 视角，给出明确路径而不是"建议升级"）
+# 升级路径（给出明确路径而不是"建议升级"）
 _ESCALATION_PATH = {
     "R-001": "Owner → PM",
     "R-002": "Owner → PM",

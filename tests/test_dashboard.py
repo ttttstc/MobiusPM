@@ -410,8 +410,8 @@ class TestWriteHtmlDashboard:
         # 至少有一种 health_class (crit / warn / ok)
         assert any(c in html for c in ["pill-crit", "pill-warn", "pill-ok"])
 
-    def test_p8_category_tag_in_risks(self, sample_work_items, tmp_path: Path):
-        """P8 升级：风险行有 PM 风险类别 tag（进度/范围/质量/资源/依赖）。"""
+    def test_category_tag_in_risks(self, sample_work_items, tmp_path: Path):
+        """风险行有 PM 风险类别 tag（进度/范围/质量/资源/依赖）。"""
         from pm_agent.tools.dashboard import write_html_dashboard
 
         result = write_html_dashboard(
@@ -428,8 +428,8 @@ class TestWriteHtmlDashboard:
                                      "cat-resource", "cat-dependency", "cat-data"]
         )
 
-    def test_p8_24h_action_in_risks(self, sample_work_items, tmp_path: Path):
-        """P8 升级：风险行有 24h 动作列。"""
+    def test_24h_action_in_risks(self, sample_work_items, tmp_path: Path):
+        """风险行有 24h 动作列。"""
         from pm_agent.tools.dashboard import write_html_dashboard
 
         result = write_html_dashboard(
@@ -445,8 +445,8 @@ class TestWriteHtmlDashboard:
             for action in ["升级", "Sponsor", "拉群", "召集", "对齐", "排期"]
         )
 
-    def test_p8_escalation_path(self, sample_work_items, tmp_path: Path):
-        """P8 升级：风险行有升级路径。"""
+    def test_escalation_path(self, sample_work_items, tmp_path: Path):
+        """风险行有升级路径。"""
         from pm_agent.tools.dashboard import write_html_dashboard
 
         result = write_html_dashboard(
@@ -458,8 +458,8 @@ class TestWriteHtmlDashboard:
         assert "升级" in html
         assert "Sponsor" in html or "PM" in html
 
-    def test_p8_impact_description(self, sample_work_items, tmp_path: Path):
-        """P8 升级：风险行有 PM 视角的影响描述。"""
+    def test_impact_description(self, sample_work_items, tmp_path: Path):
+        """风险行有 PM 视角的影响描述。"""
         from pm_agent.tools.dashboard import write_html_dashboard
 
         result = write_html_dashboard(
@@ -473,8 +473,8 @@ class TestWriteHtmlDashboard:
         # 至少一条影响说明（样本含 P0 开发中超期）
         assert "P0 已超期" in html or "影响后续依赖" in html
 
-    def test_p8_top3_with_action_in_summary(self, sample_work_items, tmp_path: Path):
-        """P8 升级：总体风险总结的 TOP 3 含 24h 动作和升级路径。"""
+    def test_top3_with_action_in_summary(self, sample_work_items, tmp_path: Path):
+        """总体风险总结的 TOP 3 含 24h 动作和升级路径。"""
         from pm_agent.tools.dashboard import write_html_dashboard
 
         result = write_html_dashboard(
@@ -492,8 +492,8 @@ class TestWriteHtmlDashboard:
         assert "24h" in summary_block
         assert "升级" in summary_block
 
-    def test_p8_category_breakdown_in_narrative(self, sample_work_items, tmp_path: Path):
-        """P8 升级：summary narrative 含 PM 风险类别分布。"""
+    def test_category_breakdown_in_narrative(self, sample_work_items, tmp_path: Path):
+        """summary narrative 含 PM 风险类别分布。"""
         from pm_agent.tools.dashboard import write_html_dashboard
 
         result = write_html_dashboard(
@@ -508,8 +508,8 @@ class TestWriteHtmlDashboard:
         # 样本含 P0 开发中超期 → 进度
         assert "风险类别分布" in html or "今日必须处置" in html
 
-    def test_p8_no_acceptance_in_risks(self, sample_work_items, tmp_path: Path):
-        """P8 升级：待验收项（R-001）不出现在风险明细，仅在提示事项。"""
+    def test_no_acceptance_in_risks(self, sample_work_items, tmp_path: Path):
+        """待验收项（R-001）不出现在风险明细，仅在提示事项。"""
         import re
         from pm_agent.tools.dashboard import write_html_dashboard
 
@@ -542,8 +542,8 @@ class TestWriteHtmlDashboard:
         advisory_pills = [p.strip() for p in advisory_pill_matches]
         assert "待验收" in advisory_pills, "待验收应在提示事项表中"
 
-    def test_p8_high_overdue_triggers_crit(self, tmp_path: Path):
-        """P8 升级：P0 已超期触发'高危冲刺'评级。"""
+    def test_high_overdue_triggers_crit(self, tmp_path: Path):
+        """P0 已超期触发'高危冲刺'评级。"""
         from pm_agent.tools.dashboard import write_html_dashboard
 
         items = [
